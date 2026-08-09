@@ -123,12 +123,14 @@ document.addEventListener("DOMContentLoaded", () => {
             li.dataset.docId = doc.doc_id;
 
             const statusClass = `status-${doc.status}`;
+            const fileTypeTag = (doc.file_type || 'pdf').toUpperCase();
 
             li.innerHTML = `
                 <div class="doc-info">
                     <div class="doc-name" title="${escapeHtml(doc.filename)}">${escapeHtml(doc.filename)}</div>
                     <div class="doc-meta-tags">
-                        <span>${doc.page_count || 0} pgs</span>
+                        <span class="file-type-badge" style="font-size: 0.68rem; font-weight: 600; padding: 1px 5px; border-radius: 3px; background: var(--bg-tertiary); color: var(--brand-primary); uppercase;">${fileTypeTag}</span>
+                        <span>${doc.page_count || 0} units</span>
                         <span class="status-badge ${statusClass}">${doc.status}</span>
                     </div>
                 </div>
@@ -345,15 +347,16 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     async function handleFileUpload(file) {
-        if (!file.name.toLowerCase().endsWith(".pdf")) {
-            showToast("Only PDF documents (.pdf) are allowed.", "error");
+        const allowedExtensions = [".pdf", ".docx", ".pptx", ".xlsx", ".csv", ".txt", ".md", ".png", ".jpg", ".jpeg", ".zip"];
+        const lowerName = file.name.toLowerCase();
+        if (!allowedExtensions.some(ext => lowerName.endsWith(ext))) {
+            showToast("Unsupported file format. Allowed: PDF, DOCX, PPTX, Excel, CSV, TXT, Image, ZIP", "error");
             return;
         }
 
         const formData = new FormData();
         formData.append("file", file);
 
-        // Show progress bar
         ingestionProgress.hidden = false;
         ingestionProgress.dataset.docId = "";
         progressFilename.textContent = file.name;
@@ -369,16 +372,34 @@ document.addEventListener("DOMContentLoaded", () => {
 
             const data = await res.json();
             if (!res.ok) {
+                if (data.skipped && data.skipped.length > 0) {
+                    data.skipped.forEach(s => showToast(`Skipped "${s.filename}": ${s.reason}`, "error"));
+                }
                 throw new Error(data.message || "Upload failed.");
             }
 
-            const docId = data.doc_id;
-            ingestionProgress.dataset.docId = docId;
-            showToast("PDF uploaded. Ingestion running in background...", "info");
+            showToast(data.message || "Upload successful. Ingestion running in background...", "info");
+
+            // Handle skipped files in ZIP uploads
+            if (data.skipped && data.skipped.length > 0) {
+                data.skipped.forEach(s => {
+                    showToast(`Skipped "${s.filename}": ${s.reason}`, "error");
+                });
+            }
 
             await fetchDocuments();
-            selectActiveDocument(docId);
-            startStatusPolling(docId);
+
+            if (data.batch && data.documents && data.documents.length > 0) {
+                data.documents.forEach(d => startStatusPolling(d.doc_id));
+                selectActiveDocument(data.documents[0].doc_id);
+                setTimeout(() => { ingestionProgress.hidden = true; }, 1500);
+            } else if (data.doc_id) {
+                ingestionProgress.dataset.docId = data.doc_id;
+                selectActiveDocument(data.doc_id);
+                startStatusPolling(data.doc_id);
+            } else {
+                ingestionProgress.hidden = true;
+            }
 
         } catch (err) {
             ingestionProgress.hidden = true;
@@ -608,8 +629,8 @@ document.addEventListener("DOMContentLoaded", () => {
         // Inline code `code`
         formatted = formatted.replace(/`(.*?)`/g, "<code style='background: var(--bg-tertiary); padding: 2px 6px; border-radius: 4px; font-family: var(--font-mono); font-size: 0.85em;'>$1</code>");
 
-        // Page reference tags [Page X] or [p. X]
-        formatted = formatted.replace(/\[(Page\s*\d+|p\.\s*\d+)\]/gi, "<span class='citation-chip' style='padding: 2px 6px; font-size: 0.72rem; display: inline-block; vertical-align: middle; margin: 0 2px;'>$1</span>");
+        // Citation reference tags [Page X], [Slide X], [Sheet X], [Row X], [Section X], [Image X]
+        formatted = formatted.replace(/\[(Page|Slide|Sheet|Row|Section|Image|p\.)[^\]]*\]/gi, "<span class='citation-chip' style='padding: 2px 6px; font-size: 0.72rem; display: inline-block; vertical-align: middle; margin: 0 2px;'>$&</span>");
 
         // Line breaks
         formatted = formatted.replace(/\n\n/g, "<div style='margin-bottom: 8px;'></div>").replace(/\n/g, "<br>");

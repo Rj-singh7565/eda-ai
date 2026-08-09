@@ -38,7 +38,13 @@ SIMILARITY_THRESHOLD = 0.35 # Score threshold below which context is ignored
 # ── Constraints & Memory ──────────────────────────────────────────────
 MAX_FILE_SIZE_MB = 25
 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
+MAX_ZIP_FILES = 15     # Maximum files extracted per ZIP archive
 MEMORY_TURNS = 4       # Number of prior Q&A turns to retain per doc session
+
+SUPPORTED_DOC_EXTENSIONS = {
+    ".pdf", ".docx", ".pptx", ".xlsx", ".csv", ".txt", ".md", ".png", ".jpg", ".jpeg"
+}
+SUPPORTED_EXTENSIONS = SUPPORTED_DOC_EXTENSIONS.union({".zip"})
 
 # ── Paths & Storage ───────────────────────────────────────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))

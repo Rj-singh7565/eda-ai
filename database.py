@@ -24,6 +24,7 @@ def init_db():
                 doc_id TEXT PRIMARY KEY,
                 filename TEXT NOT NULL,
                 file_size INTEGER NOT NULL,
+                file_type TEXT NOT NULL DEFAULT 'pdf',
                 page_count INTEGER DEFAULT 0,
                 chunk_count INTEGER DEFAULT 0,
                 status TEXT NOT NULL DEFAULT 'processing',
@@ -31,6 +32,12 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        
+        # Safely migrate existing databases missing file_type column
+        cursor.execute("PRAGMA table_info(documents)")
+        columns = [col["name"] for col in cursor.fetchall()]
+        if "file_type" not in columns:
+            cursor.execute("ALTER TABLE documents ADD COLUMN file_type TEXT NOT NULL DEFAULT 'pdf'")
         
         # Chat History Table
         cursor.execute("""
@@ -51,14 +58,14 @@ init_db()
 
 # ── Document CRUD Operations ──────────────────────────────────────────
 
-def create_document(doc_id: str, filename: str, file_size: int) -> Dict[str, Any]:
+def create_document(doc_id: str, filename: str, file_size: int, file_type: str = "pdf") -> Dict[str, Any]:
     """Register a new document with 'processing' status."""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO documents (doc_id, filename, file_size, status)
-            VALUES (?, ?, ?, 'processing')
-        """, (doc_id, filename, file_size))
+            INSERT INTO documents (doc_id, filename, file_size, file_type, status)
+            VALUES (?, ?, ?, ?, 'processing')
+        """, (doc_id, filename, file_size, file_type))
         conn.commit()
     return get_document(doc_id)
 

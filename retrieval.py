@@ -67,9 +67,15 @@ def retrieve_chunks(doc_id: str, question: str) -> List[Dict[str, Any]]:
         
         # Apply similarity threshold
         if score >= config.SIMILARITY_THRESHOLD:
-            # Parse page numbers from metadata
+            # Parse page numbers or unit labels from metadata
             raw_pages = metadata.get("pages", [])
-            pages = [int(p) if str(p).isdigit() else p for p in raw_pages]
+            pages = []
+            for p in raw_pages:
+                sp = str(p)
+                if sp.isdigit():
+                    pages.append(f"Page {sp}")
+                else:
+                    pages.append(sp)
             
             retrieved_chunks.append({
                 "text": metadata.get("text", ""),
@@ -83,7 +89,7 @@ def retrieve_chunks(doc_id: str, question: str) -> List[Dict[str, Any]]:
 
 def build_prompt_messages(question: str, chunks: List[Dict[str, Any]], chat_history: List[Dict[str, str]]) -> List[Dict[str, str]]:
     """
-    Construct chat messages prompt incorporating context, session history, and page reference rules.
+    Construct chat messages prompt incorporating context, session history, and page/slide/row citation rules.
     """
     system_prompt = (
         "You are an expert AI Data Analyst specializing in organizational, financial, and analytical report processing.\n"
@@ -92,7 +98,7 @@ def build_prompt_messages(question: str, chunks: List[Dict[str, Any]], chat_hist
         "1. Base your answer strictly on the provided Context. Do NOT use outside knowledge.\n"
         "2. If the context does not contain enough information to answer the question, state: "
         "'I could not find sufficient information in the document to answer this question.'\n"
-        "3. Always cite exact page numbers inline when stating metrics, figures, or key facts (e.g. '[Page 12]').\n"
+        "3. Always cite exact page, slide, sheet, or row references inline when stating metrics, figures, or key facts (e.g. '[Page 12]', '[Slide 4]', '[Row 15]').\n"
         "4. Format numerical data and analytical tables clearly in Markdown format when appropriate.\n"
         "5. Maintain continuity with previous conversation history if the user asks a follow-up question."
     )
@@ -105,10 +111,10 @@ def build_prompt_messages(question: str, chunks: List[Dict[str, Any]], chat_hist
             messages.append({"role": "user", "content": turn["question"]})
             messages.append({"role": "assistant", "content": turn["answer"]})
 
-    # Build context string with page tags
+    # Build context string with unit tags
     context_str = ""
     for i, c in enumerate(chunks, start=1):
-        pages_str = ", ".join([f"Page {p}" for p in c["pages"]])
+        pages_str = ", ".join(c["pages"])
         context_str += f"\n--- EXCERPT {i} [{pages_str}] ---\n{c['text']}\n"
 
     user_message = f"DOCUMENT CONTEXT:\n{context_str}\n\nUSER QUESTION:\n{question}"

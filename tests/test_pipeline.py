@@ -68,8 +68,8 @@ def test_documents_api_endpoint():
 
 
 def test_invalid_upload_format():
-    """Test POST /upload rejects non-PDF files."""
-    files = {"file": ("test.txt", b"Hello text file content", "text/plain")}
+    """Test POST /upload rejects unsupported binary formats like .exe."""
+    files = {"file": ("test.exe", b"\x00\x01\x02\x03\x04\x05", "application/octet-stream")}
     response = client.post("/upload", files=files)
     assert response.status_code == 400
-    assert "PDF documents (.pdf) are supported" in response.json()["message"]
+    assert "Unsupported or corrupted" in response.json()["message"]
