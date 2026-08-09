@@ -1,0 +1,127 @@
+================================================================================
+           AI-BASED EDA ASSISTANT v2.0 MVP — OVERVIEW & WORKING
+================================================================================
+
+1. PROJECT OVERVIEW & PURPOSE
+-----------------------------
+The AI-Based EDA (Exploratory Data Analysis) Assistant is an enterprise-grade 
+Retrieval-Augmented Generation (RAG) system built to analyze organizational reports, 
+financial statements, annual filings, academic placement statistics, and other data-heavy 
+PDF documents.
+
+Users can upload multiple PDF documents into namespaced document storage, switch 
+between documents in a modern split-pane workspace, ask natural-language analytical 
+questions, and receive streaming data-driven responses with interactive page citations.
+
+
+2. KEY FEATURES & MVP CAPABILITIES
+----------------------------------
+- Multi-Document Namespacing: Upload and manage multiple PDF documents simultaneously. 
+  Vectors are isolated per document using Pinecone namespaces (`namespace=doc_id`).
+- Async Ingestion Pipeline: Non-blocking PDF uploads with background parsing and 
+  real-time stage status polling (`parsing` → `chunking` → `embedding` → `indexing` → `ready`).
+- Table-Aware Extraction & Sentence Chunking: Uses `pdfplumber` alongside `PyPDF` to 
+  extract structured tables into Markdown format, combined with sentence/paragraph-aware chunking.
+- Similarity Threshold Filtering: Rejects low-confidence vector matches to prevent 
+  hallucinations.
+- Real-Time Streaming Responses: Token-by-token answer typing using Server-Sent Events (SSE).
+- Short-Term Conversational Memory: Retains recent Q&A turns per document session to 
+  support natural follow-up queries.
+- Modern Split-Pane UI: Dual-pane chat interface featuring drag-and-drop uploads, dark/light 
+  mode toggle, toast notifications, sample question chips, and interactive citation side drawers.
+- Engineering Hygiene & Containerization: Docker container build (`Dockerfile`, `docker-compose.yml`), 
+  rate limiting (`slowapi`), file size/MIME validation, and Pytest test suite.
+
+
+3. SYSTEM ARCHITECTURE & TECH STACK
+----------------------------------
++------------------+---------------------------------------------------------+
+| Component        | Technology / Library Used                               |
++------------------+---------------------------------------------------------+
+| Backend Framework| Python 3.12+, FastAPI, Uvicorn, slowapi                 |
+| Database Registry| SQLite3 (`eda_assistant.db`)                            |
+| Frontend         | HTML5, Vanilla CSS3 (Custom Variables), Vanilla JS      |
+| PDF & Table Parsing| pdfplumber, PyPDF                                     |
+| Text Embeddings  | SentenceTransformers (BAAI/bge-small-en-v1.5, 384 dim)  |
+| Vector Database  | Pinecone (Serverless Index, Namespaced Cosine Search)   |
+| LLM Engine       | Groq API (Meta Llama 3.3 70B Versatile SSE Streaming)   |
+| Resilience       | Tenacity (Exponential Backoff Retries)                  |
+| Containerization | Docker, Docker Compose                                  |
+| Test Suite       | Pytest, TestClient                                      |
++------------------+---------------------------------------------------------+
+
+
+4. STEP-BY-STEP WORKING MECHANISM
+----------------------------------
+
+[ PHASE 1: DOCUMENT INGESTION & PIPELINE ]
+1. File Upload (/upload):
+   - User drags and drops a PDF into the sidebar upload zone.
+   - FastAPI validates MIME type (%PDF- header) and file size (<= 25MB).
+   - Generates a UUID `doc_id`, registers initial record in SQLite (`status='processing'`), 
+     and dispatches background task `run_ingestion_pipeline`.
+
+2. Table Extraction & Parsing (ingestion.extract_pages_with_tables):
+   - `pdfplumber` detects and formats tables into Markdown tables.
+   - `PyPDF` extracts page narrative text tagged with 1-indexed page numbers.
+
+3. Sentence-Aware Chunking (ingestion.chunk_text_sentence_aware):
+   - Markdown tables are preserved intact as table chunks.
+   - Narrative text is split by paragraph/sentence boundaries without cutting sentences.
+
+4. Embedding & Namespaced Upsert (ingestion.run_ingestion_pipeline):
+   - SentenceTransformer (`bge-small-en-v1.5`) embeds chunks into 384-dimensional vectors.
+   - Vectors are upserted to Pinecone under `namespace=doc_id`.
+   - SQLite status updates to `ready`.
+
+[ PHASE 2: QUERY RETRIEVAL & STREAMING ]
+1. Streaming Question Submission (/ask/stream):
+   - User submits query for active `doc_id`.
+
+2. Namespaced Search & Similarity Threshold (retrieval.retrieve_chunks):
+   - Question embedded and Pinecone queried under `namespace=doc_id`.
+   - Matches with score < 0.35 are discarded.
+
+3. Session Memory & SSE Token Streaming (retrieval.generate_answer_stream):
+   - Recent Q&A turns fetched from SQLite (`chat_history`) and merged into Groq prompt.
+   - Groq API streams response tokens back over HTTP SSE stream.
+   - Frontend appends tokens in real time and renders interactive citation chips.
+
+
+5. PROJECT FILE STRUCTURE
+-------------------------
+├── app.py                # FastAPI Web Server, API endpoints, rate limiter
+├── ingestion.py          # Table extraction, sentence chunking, background worker
+├── retrieval.py          # Namespaced Pinecone search, score threshold, Groq SSE stream
+├── database.py           # SQLite schema, document registry, session memory
+├── rag.py                # Pipeline entry-point interface
+├── config.py             # Global constants, env validation, thresholds
+├── PROJECT_OVERVIEW.txt  # Detailed project description and technical specification
+├── README.md             # Project overview & quick-start guide
+├── requirements.txt      # Python dependencies
+├── Dockerfile            # Container build specification
+├── docker-compose.yml    # Service compose setup
+├── tests/                # Pytest test suite
+│   └── test_pipeline.py  # Unit & integration test cases
+├── uploads/              # Local PDF storage directory
+├── static/               # Frontend assets (CSS design system, JS state & SSE)
+└── templates/            # HTML templates (index.html layout)
+
+
+6. HOW TO RUN THE PROJECT
+-------------------------
+Option A: Local Virtual Environment
+1. Install dependencies: pip install -r requirements.txt
+2. Configure `.env`:
+   GROQ_API_KEY=your_groq_api_key
+   PINECONE_API_KEY=your_pinecone_api_key
+   PINECONE_INDEX_NAME=eda-assistant
+3. Run tests: python -m pytest tests/test_pipeline.py
+4. Launch server: venv\Scripts\activate
+uvicorn app:app --reload
+5. Open browser: http://localhost:8000
+
+Option B: Docker Compose
+1. Ensure `.env` is configured.
+2. Run: docker-compose up --build
+================================================================================
