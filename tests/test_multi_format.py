@@ -103,6 +103,22 @@ def test_extract_csv_excel():
         os.remove(csv_path)
 
 
+def test_non_utf8_csv_extraction():
+    """Verify CSV with non-UTF8 characters (e.g. 0xa0 non-breaking space / latin-1) ingests cleanly."""
+    raw_bytes = b"ID,Name,Value\n1,Item \xa0 A,100\n2,Caf\xe9,200\n"
+    with tempfile.NamedTemporaryFile(suffix=".csv", mode="wb", delete=False) as f:
+        f.write(raw_bytes)
+        csv_path = f.name
+
+    try:
+        data = ingestion.extract_excel_csv(csv_path, "csv")
+        assert len(data) == 1
+        assert len(data[0]["tables"]) == 1
+        assert "Item" in data[0]["tables"][0]
+    finally:
+        os.remove(csv_path)
+
+
 def test_zip_upload_batch_and_failure_isolation():
     """Test ZIP upload containing mixed valid files, unsupported format, and nested ZIP."""
     zip_buffer = io.BytesIO()

@@ -52,6 +52,17 @@ document.addEventListener("DOMContentLoaded", () => {
     // Toast Container
     const toastContainer = document.getElementById("toast-container");
 
+    // Markdown Preview Modal
+    const markdownModalBackdrop = document.getElementById("markdown-modal-backdrop");
+    const modalDocTitle = document.getElementById("modal-doc-title");
+    const modalMarkdownContent = document.getElementById("modal-markdown-content");
+    const copyMdBtn = document.getElementById("copy-md-btn");
+    const downloadMdBtn = document.getElementById("download-md-btn");
+    const closeMdModalBtn = document.getElementById("close-md-modal");
+
+    let activeModalMdText = "";
+    let activeModalFilename = "";
+
     // ── 1. Theme Management ──────────────────────────────────────────────
     function applyTheme(theme) {
         state.theme = theme;
@@ -134,28 +145,49 @@ document.addEventListener("DOMContentLoaded", () => {
                         <span class="status-badge ${statusClass}">${doc.status}</span>
                     </div>
                 </div>
-                <button class="doc-delete-btn" title="Delete document" aria-label="Delete document">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <polyline points="3 6 5 6 21 6"/>
-                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                    </svg>
-                </button>
+                <div class="doc-action-btns">
+                    <button class="doc-md-btn" title="View as Markdown" aria-label="View as Markdown">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                            <polyline points="14 2 14 8 20 8"/>
+                            <line x1="16" y1="13" x2="8" y2="13"/>
+                            <line x1="16" y1="17" x2="8" y2="17"/>
+                        </svg>
+                    </button>
+                    <button class="doc-delete-btn" title="Delete document" aria-label="Delete document">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"/>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                        </svg>
+                    </button>
+                </div>
             `;
 
             // Document click -> select active
             li.addEventListener("click", (e) => {
-                if (e.target.closest(".doc-delete-btn")) return;
+                if (e.target.closest(".doc-action-btns")) return;
                 selectActiveDocument(doc.doc_id);
             });
 
+            // View Markdown click
+            const mdBtn = li.querySelector(".doc-md-btn");
+            if (mdBtn) {
+                mdBtn.addEventListener("click", async (e) => {
+                    e.stopPropagation();
+                    await openMarkdownModal(doc);
+                });
+            }
+
             // Delete click
             const delBtn = li.querySelector(".doc-delete-btn");
-            delBtn.addEventListener("click", async (e) => {
-                e.stopPropagation();
-                if (confirm(`Delete "${doc.filename}" and its vectors?`)) {
-                    await deleteDocument(doc.doc_id);
-                }
-            });
+            if (delBtn) {
+                delBtn.addEventListener("click", async (e) => {
+                    e.stopPropagation();
+                    if (confirm(`Delete "${doc.filename}" and its vectors?`)) {
+                        await deleteDocument(doc.doc_id);
+                    }
+                });
+            }
 
             docsList.appendChild(li);
 
@@ -169,23 +201,106 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     async function deleteDocument(docId) {
+        // Optimistic UI update: remove document from state and UI immediately (<10ms)
+        const prevDocuments = [...state.documents];
+        const targetDoc = state.documents.find(d => d.doc_id === docId);
+        const docName = targetDoc ? targetDoc.filename : "Document";
+
+        state.documents = state.documents.filter(d => d.doc_id !== docId);
+
+        if (state.pollingIntervals[docId]) {
+            clearInterval(state.pollingIntervals[docId]);
+            delete state.pollingIntervals[docId];
+        }
+
+        if (state.activeDocId === docId) {
+            const nextDoc = state.documents.find(d => d.status === "ready") || state.documents[0];
+            selectActiveDocument(nextDoc ? nextDoc.doc_id : null, false);
+        }
+
+        renderDocumentsList();
+        showToast(`Deleted "${docName}".`, "success");
+
+        // Execute asynchronous backend deletion
         try {
             const res = await fetch(`/documents/${docId}`, { method: "DELETE" });
-            if (!res.ok) throw new Error("Delete failed.");
-            
-            if (state.pollingIntervals[docId]) {
-                clearInterval(state.pollingIntervals[docId]);
-                delete state.pollingIntervals[docId];
-            }
-
-            showToast("Document deleted successfully.", "success");
-            if (state.activeDocId === docId) {
-                state.activeDocId = null;
-            }
-            await fetchDocuments();
+            if (!res.ok) throw new Error("Delete request failed on server.");
         } catch (err) {
-            showToast("Failed to delete document.", "error");
+            console.error("deleteDocument error:", err);
+            showToast(`Failed to delete "${docName}" from server.`, "error");
+            // Rollback optimistic state if backend delete fails
+            state.documents = prevDocuments;
+            renderDocumentsList();
         }
+    }
+
+    async function openMarkdownModal(doc) {
+        try {
+            const res = await fetch(`/document/${doc.doc_id}/markdown`);
+            if (!res.ok) {
+                if (res.status === 404) {
+                    showToast("Markdown version not available for this document.", "info");
+                    return;
+                }
+                throw new Error("Failed to load Markdown content.");
+            }
+            const mdText = await res.text();
+            activeModalMdText = mdText;
+            activeModalFilename = doc.filename ? `${doc.filename}.md` : "document.md";
+
+            modalDocTitle.textContent = `${doc.filename} — Canonical Markdown`;
+            modalMarkdownContent.textContent = mdText;
+            markdownModalBackdrop.hidden = false;
+        } catch (err) {
+            console.error("openMarkdownModal error:", err);
+            showToast("Failed to fetch document markdown.", "error");
+        }
+    }
+
+    function closeMarkdownModal() {
+        markdownModalBackdrop.hidden = true;
+        modalMarkdownContent.textContent = "";
+        activeModalMdText = "";
+        activeModalFilename = "";
+    }
+
+    if (closeMdModalBtn) {
+        closeMdModalBtn.addEventListener("click", closeMarkdownModal);
+    }
+
+    if (markdownModalBackdrop) {
+        markdownModalBackdrop.addEventListener("click", (e) => {
+            if (e.target === markdownModalBackdrop) {
+                closeMarkdownModal();
+            }
+        });
+    }
+
+    if (copyMdBtn) {
+        copyMdBtn.addEventListener("click", () => {
+            if (!activeModalMdText) return;
+            navigator.clipboard.writeText(activeModalMdText).then(() => {
+                showToast("Markdown text copied to clipboard!", "success");
+            }).catch(() => {
+                showToast("Failed to copy to clipboard.", "error");
+            });
+        });
+    }
+
+    if (downloadMdBtn) {
+        downloadMdBtn.addEventListener("click", () => {
+            if (!activeModalMdText) return;
+            const blob = new Blob([activeModalMdText], { type: "text/markdown;charset=utf-8" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = activeModalFilename || "document.md";
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            showToast("Downloaded Markdown file.", "success");
+        });
     }
 
     function selectActiveDocument(docId, shouldRefreshList = false) {
@@ -211,6 +326,7 @@ document.addEventListener("DOMContentLoaded", () => {
             emptyState.hidden = false;
             docWelcomeChips.hidden = true;
             chatMessages.innerHTML = "";
+            questionInput.placeholder = "Upload or select a document to ask custom questions...";
             questionInput.disabled = true;
             sendBtn.disabled = true;
             return;
@@ -228,7 +344,14 @@ document.addEventListener("DOMContentLoaded", () => {
             docWelcomeChips.hidden = false;
             questionInput.disabled = false;
             sendBtn.disabled = false;
+            questionInput.placeholder = `Ask any custom analytical question about ${doc.filename}... (Press Enter ↵ to send)`;
             loadChatHistory(docId);
+            setTimeout(() => questionInput.focus(), 100);
+        } else {
+            docWelcomeChips.hidden = true;
+            questionInput.disabled = true;
+            sendBtn.disabled = true;
+            questionInput.placeholder = `Document is ${doc.status}... Custom questions will unlock once ready.`;
         }
     }
 
@@ -258,17 +381,33 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const interval = setInterval(async () => {
             try {
+                // If document was deleted from state, stop polling immediately
+                const existsInState = state.documents.some(d => d.doc_id === docId);
+                if (!existsInState) {
+                    clearInterval(interval);
+                    delete state.pollingIntervals[docId];
+                    return;
+                }
+
                 const res = await fetch(`/status/${docId}`);
-                if (!res.ok) return;
+                if (!res.ok) {
+                    // 404 means document was deleted server-side, stop polling
+                    if (res.status === 404) {
+                        clearInterval(interval);
+                        delete state.pollingIntervals[docId];
+                    }
+                    return;
+                }
                 const doc = await res.json();
 
-                // Update local document record
+                // Re-check after async fetch — document may have been deleted while request was in-flight
                 const idx = state.documents.findIndex(d => d.doc_id === docId);
-                if (idx !== -1) {
-                    state.documents[idx] = doc;
-                } else {
-                    state.documents.push(doc);
+                if (idx === -1) {
+                    clearInterval(interval);
+                    delete state.pollingIntervals[docId];
+                    return;
                 }
+                state.documents[idx] = doc;
 
                 renderDocumentsList();
 
@@ -408,6 +547,20 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // ── 5. Chat Interaction & SSE Streaming ──────────────────────────────
+    // Auto-resize textarea as user types
+    questionInput.addEventListener("input", () => {
+        questionInput.style.height = "auto";
+        questionInput.style.height = `${Math.min(questionInput.scrollHeight, 140)}px`;
+    });
+
+    // Press Enter to submit (Shift+Enter for multi-line newline)
+    questionInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            chatForm.requestSubmit();
+        }
+    });
+
     chatForm.addEventListener("submit", (e) => {
         e.preventDefault();
         submitQuestion(questionInput.value);
@@ -426,6 +579,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!q || !state.activeDocId) return;
 
         questionInput.value = "";
+        questionInput.style.height = "auto";
         docWelcomeChips.hidden = true;
 
         appendUserBubble(q);

@@ -6,10 +6,11 @@ import os
 import uuid
 import zipfile
 import tempfile
+import asyncio
 from typing import Optional, List, Dict, Any
 
 from fastapi import FastAPI, UploadFile, File, Request, BackgroundTasks, HTTPException
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
@@ -244,30 +245,77 @@ async def get_document_chat_history(doc_id: str):
     return {"doc_id": doc_id, "history": history}
 
 
-@app.delete("/documents/{doc_id}")
-async def delete_document_record(doc_id: str):
-    """Delete a document, its Pinecone namespace, local stored file, and database records."""
+@app.get("/document/{doc_id}/markdown")
+@app.get("/documents/{doc_id}/markdown")
+async def get_document_markdown(doc_id: str):
+    """Retrieve raw normalized Markdown representation for a document."""
     doc = database.get_document(doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found.")
 
-    # Remove local file matching doc_id
-    for fname in os.listdir(config.UPLOAD_DIR):
-        if fname.startswith(doc_id):
-            try:
-                os.remove(os.path.join(config.UPLOAD_DIR, fname))
-            except Exception:
-                pass
+    md_path = doc.get("markdown_path")
+    if not md_path or not os.path.exists(md_path):
+        fallback_path = os.path.join(config.PROCESSED_DIR, f"{doc_id}.md")
+        if os.path.exists(fallback_path):
+            md_path = fallback_path
 
-    # Purge Pinecone namespace
+    if not md_path or not os.path.exists(md_path):
+        raise HTTPException(
+            status_code=404,
+            detail="Markdown representation not available for this document."
+        )
+
+    with open(md_path, "r", encoding="utf-8", errors="replace") as f:
+        md_content = f.read()
+
+    return Response(content=md_content, media_type="text/markdown; charset=utf-8")
+
+
+def _purge_pinecone_namespace(doc_id: str):
     try:
         index = retrieval.get_pinecone_index()
         index.delete(delete_all=True, namespace=doc_id)
     except Exception as e:
         print(f"[WARN] Failed to purge Pinecone namespace {doc_id}: {e}")
 
-    # Delete SQLite records
+
+def _cleanup_local_files(doc_id: str):
+    """Remove uploaded file and processed markdown from disk (runs in a thread)."""
+    # Remove local upload file matching doc_id
+    try:
+        for fname in os.listdir(config.UPLOAD_DIR):
+            if fname.startswith(doc_id):
+                try:
+                    os.remove(os.path.join(config.UPLOAD_DIR, fname))
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    # Remove processed markdown file matching doc_id
+    processed_md = os.path.join(config.PROCESSED_DIR, f"{doc_id}.md")
+    try:
+        if os.path.exists(processed_md):
+            os.remove(processed_md)
+    except Exception:
+        pass
+
+
+@app.delete("/documents/{doc_id}")
+async def delete_document_record(doc_id: str, background_tasks: BackgroundTasks):
+    """Delete a document, local stored files, and database records instantly; offload Pinecone purge to background."""
+    doc = database.get_document(doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    # Delete SQLite records immediately (fast, <1ms)
     database.delete_document(doc_id)
+
+    # Offload slow filesystem I/O to a thread so we don't block the event loop
+    background_tasks.add_task(asyncio.to_thread, _cleanup_local_files, doc_id)
+
+    # Offload Pinecone cloud deletion to background task
+    background_tasks.add_task(_purge_pinecone_namespace, doc_id)
 
     return {"message": f"Document {doc_id} and associated resources deleted successfully."}
 
@@ -302,3 +350,9 @@ async def ask_question_stream(request: Request, payload: QuestionStreamRequest):
         retrieval.generate_answer_stream(doc_id, question),
         media_type="text/event-stream"
     )
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
+

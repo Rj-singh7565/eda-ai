@@ -49,8 +49,10 @@ SUPPORTED_EXTENSIONS = SUPPORTED_DOC_EXTENSIONS.union({".zip"})
 # ── Paths & Storage ───────────────────────────────────────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
+PROCESSED_DIR = os.path.join(BASE_DIR, "processed")
 DB_PATH = os.path.join(BASE_DIR, "eda_assistant.db")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+os.makedirs(PROCESSED_DIR, exist_ok=True)
 
 # Run initial validation
 validate_config()
