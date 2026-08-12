@@ -7,6 +7,7 @@ import re
 import os
 import zipfile
 import traceback
+from datetime import datetime, timezone
 from typing import List, Dict, Any
 
 from pypdf import PdfReader
@@ -272,7 +273,16 @@ def extract_excel_csv(file_path: str, file_type: str) -> List[Dict[str, Any]]:
     pages_data = []
 
     if file_type == "csv":
-        sheets = {"Data": pd.read_csv(file_path)}
+        df = None
+        for enc in ("utf-8", "utf-8-sig", "latin-1", "cp1252", "iso-8859-1"):
+            try:
+                df = pd.read_csv(file_path, encoding=enc)
+                break
+            except Exception:
+                continue
+        if df is None:
+            df = pd.read_csv(file_path, encoding_errors="replace")
+        sheets = {"Data": df}
     else:
         sheets = pd.read_excel(file_path, sheet_name=None)
 
@@ -310,15 +320,22 @@ def extract_excel_csv(file_path: str, file_type: str) -> List[Dict[str, Any]]:
 
 
 def extract_txt_md(txt_path: str) -> List[Dict[str, Any]]:
-    """Read plain text or Markdown files."""
+    """Read plain text or Markdown files with encoding fallbacks."""
     content = ""
-    for enc in ("utf-8", "utf-8-sig", "latin-1"):
+    for enc in ("utf-8", "utf-8-sig", "latin-1", "cp1252", "iso-8859-1"):
         try:
             with open(txt_path, "r", encoding=enc) as f:
                 content = f.read()
             break
-        except UnicodeDecodeError:
+        except Exception:
             continue
+
+    if not content:
+        try:
+            with open(txt_path, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+        except Exception:
+            pass
 
     if not content.strip():
         return []
@@ -397,7 +414,250 @@ def extract_by_type(file_path: str, file_type: str) -> List[Dict[str, Any]]:
         raise ValueError(f"Unsupported document format type '{file_type}'.")
 
 
-# ── Sentence-Aware Chunker ───────────────────────────────────────────
+# ── Markdown Normalization Engine ─────────────────────────────────────
+
+def _preserve_list_formatting(text: str) -> str:
+    """Ensure bulleted and numbered list items retain clean linebreaks."""
+    lines = text.split("\n")
+    formatted_lines = []
+    in_list = False
+
+    for line in lines:
+        stripped = line.strip()
+        is_list_item = bool(re.match(r'^([\*\-\+]\s+|\d+[\.\)]\s+)', stripped))
+        if is_list_item:
+            if not in_list and formatted_lines and formatted_lines[-1] != "":
+                formatted_lines.append("")
+            formatted_lines.append(stripped)
+            in_list = True
+        else:
+            if in_list and stripped != "":
+                in_list = False
+            formatted_lines.append(line)
+
+    return "\n".join(formatted_lines)
+
+
+def normalize_to_markdown(
+    extracted_content: List[Dict[str, Any]],
+    file_type: str,
+    filename: str,
+    doc_id: str
+) -> str:
+    """
+    Convert raw extracted content (text blocks, tables, slide/page metadata) into a single,
+    canonical well-structured Markdown (.md) document with YAML front matter header.
+    """
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    # Determine count metric (page_count / slide_count / row_count)
+    count_key = "page_count"
+    count_val = len(extracted_content)
+
+    if file_type == "pptx":
+        count_key = "slide_count"
+        count_val = len(extracted_content)
+    elif file_type in ("excel", "csv"):
+        count_key = "row_count"
+        total_rows = 0
+        for item in extracted_content:
+            for tbl in item.get("tables", []):
+                lines = [l for l in tbl.splitlines() if l.strip() and not l.strip().startswith("| ---")]
+                if lines:
+                    total_rows += max(0, len(lines) - 1)
+        count_val = total_rows if total_rows > 0 else len(extracted_content)
+
+    front_matter = (
+        "---\n"
+        f"title: {filename}\n"
+        f"source_filename: {filename}\n"
+        f"file_type: {file_type}\n"
+        f"doc_id: {doc_id}\n"
+        f"ingested_at: {now_iso}\n"
+        f"{count_key}: {count_val}\n"
+        "---\n\n"
+    )
+
+    body_parts = []
+
+    for item in extracted_content:
+        page_num = item.get("page", 1)
+        page_label = item.get("page_label", f"Page {page_num}")
+        text = item.get("text", "").strip()
+        tables = item.get("tables", [])
+
+        # Format section headings
+        if file_type == "image":
+            section_header = "## Extracted Text (OCR)"
+        elif file_type in ("excel", "csv"):
+            section_header = f"## {page_label}"
+        elif file_type == "pptx":
+            section_header = f"## {page_label}"
+        else:
+            # Check if text already starts with a Markdown header
+            if text and (text.startswith("# ") or text.startswith("## ") or text.startswith("### ")):
+                section_header = ""
+            else:
+                section_header = f"## {page_label}"
+
+        section_block = []
+        if section_header:
+            section_block.append(section_header)
+
+        if text:
+            formatted_text = _preserve_list_formatting(text)
+            section_block.append(formatted_text)
+
+        if tables:
+            for tbl in tables:
+                if tbl.strip():
+                    section_block.append(tbl.strip())
+
+        if section_block:
+            body_parts.append("\n\n".join(section_block))
+
+    return front_matter + "\n\n".join(body_parts) + "\n"
+
+
+# ── Canonical Markdown Chunker ───────────────────────────────────────
+
+def chunk_markdown(
+    markdown_content: str,
+    chunk_size: int = config.CHUNK_SIZE,
+    overlap: int = config.CHUNK_OVERLAP
+) -> List[Dict[str, Any]]:
+    """
+    Standardized sentence and table-aware chunker operating on canonical Markdown content.
+    Preserves table structure and structural headings for consistent chunking across formats.
+    """
+    content = markdown_content
+    # Strip YAML front matter if present
+    if content.startswith("---"):
+        parts = content.split("---", 2)
+        if len(parts) >= 3:
+            content = parts[2].strip()
+
+    section_pattern = re.compile(r'^(#+\s+.*)$', re.MULTILINE)
+    splits = section_pattern.split(content)
+
+    chunks = []
+    current_label = "Document Content"
+    current_page = 1
+
+    idx = 0
+    if splits and not splits[0].startswith("#"):
+        initial_block = splits[0].strip()
+        idx = 1
+    else:
+        initial_block = ""
+
+    blocks_to_process = []
+    if initial_block:
+        blocks_to_process.append((current_label, current_page, initial_block))
+
+    while idx < len(splits):
+        heading = splits[idx].strip()
+        body = splits[idx + 1].strip() if idx + 1 < len(splits) else ""
+        idx += 2
+
+        clean_heading = heading.lstrip("#").strip()
+        current_label = clean_heading if clean_heading else "Section"
+
+        page_match = re.search(r'\b(?:Page|Slide|Section)\s+(\d+)\b', clean_heading, re.IGNORECASE)
+        if page_match:
+            current_page = int(page_match.group(1))
+
+        if body:
+            blocks_to_process.append((current_label, current_page, body))
+
+    for label, page_num, body_text in blocks_to_process:
+        lines = body_text.split("\n")
+        para_lines = []
+        tbl_lines = []
+        in_table = False
+
+        def flush_table(table_rows):
+            if not table_rows:
+                return
+            tbl_md = "\n".join(table_rows)
+            chunks.append({
+                "text": f"Table Excerpt [{label}]:\n{tbl_md}",
+                "pages": [page_num],
+                "page_labels": [label],
+                "is_table": True
+            })
+
+        def flush_paragraphs(p_lines):
+            if not p_lines:
+                return
+            raw_p_text = "\n".join(p_lines).strip()
+            if not raw_p_text:
+                return
+
+            paragraphs = [p.strip() for p in raw_p_text.split("\n\n") if p.strip()]
+            current_chunk = ""
+
+            for para in paragraphs:
+                if len(current_chunk) + len(para) + 2 <= chunk_size:
+                    current_chunk = f"{current_chunk}\n\n{para}".strip()
+                else:
+                    if current_chunk:
+                        chunks.append({
+                            "text": current_chunk,
+                            "pages": [page_num],
+                            "page_labels": [label],
+                            "is_table": False
+                        })
+
+                    if len(para) > chunk_size:
+                        sentences = re.split(r'(?<=[.!?])\s+', para)
+                        sub_chunk = ""
+                        for sentence in sentences:
+                            if len(sub_chunk) + len(sentence) + 1 <= chunk_size:
+                                sub_chunk = f"{sub_chunk} {sentence}".strip()
+                            else:
+                                if sub_chunk:
+                                    chunks.append({
+                                        "text": sub_chunk,
+                                        "pages": [page_num],
+                                        "page_labels": [label],
+                                        "is_table": False
+                                    })
+                                sub_chunk = sentence
+                        if sub_chunk:
+                            current_chunk = sub_chunk
+                    else:
+                        current_chunk = para
+
+            if current_chunk:
+                chunks.append({
+                    "text": current_chunk,
+                    "pages": [page_num],
+                    "page_labels": [label],
+                    "is_table": False
+                })
+
+        for line in lines:
+            if line.strip().startswith("|"):
+                if not in_table:
+                    flush_paragraphs(para_lines)
+                    para_lines = []
+                    in_table = True
+                tbl_lines.append(line)
+            else:
+                if in_table:
+                    flush_table(tbl_lines)
+                    tbl_lines = []
+                    in_table = False
+                para_lines.append(line)
+
+        if in_table:
+            flush_table(tbl_lines)
+        else:
+            flush_paragraphs(para_lines)
+
+    return chunks
+
 
 def chunk_text_sentence_aware(
     pages_data: List[Dict[str, Any]],
@@ -405,7 +665,8 @@ def chunk_text_sentence_aware(
     overlap: int = config.CHUNK_OVERLAP
 ) -> List[Dict[str, Any]]:
     """
-    Sentence and paragraph-aware chunker that preserves table structure and format-specific unit labels.
+    Sentence and paragraph-aware chunker operating on pages_data.
+    Maintained for backward compatibility and unit tests.
     """
     chunks = []
     
@@ -478,7 +739,7 @@ def chunk_text_sentence_aware(
 def run_ingestion_pipeline(doc_id: str, file_path: str, file_type: str = "pdf"):
     """
     Isolated async background task executing the full ingestion workflow:
-    parse -> chunk -> embed -> Pinecone upsert under namespace=doc_id.
+    parse -> normalize to Markdown -> chunk canonical Markdown -> embed -> Pinecone upsert under namespace=doc_id.
     """
     try:
         # Phase 1: Parsing
@@ -493,9 +754,18 @@ def run_ingestion_pipeline(doc_id: str, file_path: str, file_type: str = "pdf"):
             )
             return
 
-        # Phase 2: Chunking
+        # Phase 1.5: Markdown Normalization & Persistence
+        filename = os.path.basename(file_path)
+        markdown_str = normalize_to_markdown(pages_data, file_type, filename, doc_id)
+        md_path = os.path.join(config.PROCESSED_DIR, f"{doc_id}.md")
+        with open(md_path, "w", encoding="utf-8") as f:
+            f.write(markdown_str)
+
+        database.update_document_status(doc_id, "parsing", markdown_path=md_path)
+
+        # Phase 2: Chunking against canonical Markdown representation
         database.update_document_status(doc_id, "chunking")
-        chunks = chunk_text_sentence_aware(pages_data)
+        chunks = chunk_markdown(markdown_str)
         chunk_count = len(chunks)
         database.update_document_status(doc_id, "chunking", chunk_count=chunk_count)
 

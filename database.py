@@ -33,11 +33,13 @@ def init_db():
             )
         """)
         
-        # Safely migrate existing databases missing file_type column
+        # Safely migrate existing databases missing file_type or markdown_path columns
         cursor.execute("PRAGMA table_info(documents)")
         columns = [col["name"] for col in cursor.fetchall()]
         if "file_type" not in columns:
             cursor.execute("ALTER TABLE documents ADD COLUMN file_type TEXT NOT NULL DEFAULT 'pdf'")
+        if "markdown_path" not in columns:
+            cursor.execute("ALTER TABLE documents ADD COLUMN markdown_path TEXT")
         
         # Chat History Table
         cursor.execute("""
@@ -74,7 +76,8 @@ def update_document_status(
     status: str,
     page_count: Optional[int] = None,
     chunk_count: Optional[int] = None,
-    error_message: Optional[str] = None
+    error_message: Optional[str] = None,
+    markdown_path: Optional[str] = None
 ):
     """Update document ingestion status and stats."""
     with get_db_connection() as conn:
@@ -94,6 +97,10 @@ def update_document_status(
         if error_message is not None:
             updates.append("error_message = ?")
             params.append(error_message)
+
+        if markdown_path is not None:
+            updates.append("markdown_path = ?")
+            params.append(markdown_path)
             
         params.append(doc_id)
         query = f"UPDATE documents SET {', '.join(updates)} WHERE doc_id = ?"
