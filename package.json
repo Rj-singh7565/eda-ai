@@ -1,0 +1,16 @@
+{
+  "name": "eda-assistant",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -k \"npm:dev:backend\" \"npm:dev:frontend\"",
+    "dev:backend": "python app.py",
+    "dev:frontend": "npm run dev --prefix frontend",
+    "build": "npm run build --prefix frontend",
+    "start": "npm run start --prefix frontend"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
+

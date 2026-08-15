@@ -1,114 +1,154 @@
-# AI-Based EDA Assistant
+# AI-Based EDA Assistant — Production-Ready MVP
 
-An AI-powered Data Analyst for organizational reports. Upload a PDF document and ask analytical questions in natural language — the assistant retrieves relevant context and generates data-driven answers with page references.
-
----
-
-## Tech Stack
-
-| Component        | Technology                |
-|------------------|---------------------------|
-| Backend          | Python 3.12+, FastAPI     |
-| Frontend         | HTML, CSS, Vanilla JS     |
-| Vector Database  | Pinecone (Serverless)     |
-| Embeddings       | BAAI/bge-small-en-v1.5    |
-| LLM              | Groq — Llama 3.3 70B     |
-| PDF Processing   | PyPDF                     |
+An enterprise-grade Retrieval-Augmented Generation (RAG) system for data-heavy document intelligence, exploratory data analysis, and natural-language document Q&A with verifiable page/slide/row citations.
 
 ---
 
-## Setup
+## 1. System Architecture
 
-### 1. Clone and navigate
-
-```bash
-cd ai_based_eda_assistant
+```text
+                    USER
+                      |
+                      v
+             +----------------+
+             | Next.js Frontend|  (Vercel)
+             +-------+---------+
+                     |
+                  HTTPS API
+                     |
+                     v
+             +----------------+
+             | FastAPI Backend|  (Docker on Render / Railway)
+             +-------+--------+
+                     |
+        +------------+------------+
+        |            |            |
+        v            v            v
+   PostgreSQL    Pinecone      Object Storage
+   (Supabase)    (Vectors)     (S3 / Supabase)
+        |            |
+        |            v
+        |          RAG
+        |            |
+        |            v
+        |         Groq API
+        |       Llama 3.3 70B
 ```
 
-### 2. Create a virtual environment
+---
 
-```bash
-python -m venv venv
-venv\Scripts\activate        # Windows
-# source venv/bin/activate   # macOS / Linux
-```
+## 2. Tech Stack
 
-### 3. Install dependencies
+* **Frontend**: Next.js 14, React 18, TypeScript, Lucide Icons, Vanilla CSS Custom Variables Design System (`AGENTS.md` compliant).
+* **Backend**: FastAPI (Python 3.12+), Uvicorn, SlowAPI rate limiting, Tenacity retry protection.
+* **Database**: PostgreSQL (Supabase / Neon) for cloud production, SQLite (`eda_assistant.db`) fallback for local zero-config dev.
+* **Storage**: Abstracted Object Storage (AWS S3 / Supabase Storage) with local file fallback (`uploads/`, `processed/`).
+* **Vector Database**: Pinecone Serverless Index with document-level namespace isolation (`namespace=doc_id`).
+* **Embeddings**: SentenceTransformers (`BAAI/bge-small-en-v1.5`, 384-dimensional).
+* **LLM Engine**: Groq API (`llama-3.3-70b-versatile`) with token-by-token SSE streaming.
+* **Document Extraction**: `pypdf`, `pdfplumber`, `python-docx`, `python-pptx`, `pandas`, `openpyxl`, `pytesseract` OCR.
 
-```bash
-pip install -r requirements.txt
-```
+---
 
-### 4. Configure environment variables
+## 3. Environment Variables (`.env`)
 
-Copy the example file and fill in your keys:
+Copy `.env.example` to `.env` and fill in required values:
 
-```bash
-copy .env.example .env
-```
-
-Edit `.env`:
-
-```
+```env
+# Mandatory LLM & Vector DB Keys
 GROQ_API_KEY=your_groq_api_key
 PINECONE_API_KEY=your_pinecone_api_key
 PINECONE_INDEX_NAME=eda-assistant
+
+# Production PostgreSQL Database (Optional - Defaults to local SQLite if omitted)
+DATABASE_URL=postgresql://postgres:password@db.supabase.co:5432/postgres
+
+# Production Object Storage (Optional - Defaults to local filesystem if omitted)
+STORAGE_TYPE=local # 'local', 's3', or 'supabase'
+S3_BUCKET=your_s3_bucket
+S3_ENDPOINT_URL=https://s3.amazonaws.com
+AWS_ACCESS_KEY_ID=your_aws_key
+AWS_SECRET_ACCESS_KEY=your_aws_secret
 ```
 
-**Getting API keys:**
+---
 
-- **Groq** → [console.groq.com](https://console.groq.com) (free tier available)
-- **Pinecone** → [app.pinecone.io](https://app.pinecone.io) (free Starter plan)
+## 4. Local Quick Start
 
-### 5. Run the application
+### Option A: Python Local Virtual Environment
+
+1. Activate virtual environment and install dependencies:
+   ```bash
+   python -m venv venv
+   venv\Scripts\activate          # Windows
+   source venv/bin/activate       # macOS / Linux
+   pip install -r requirements.txt
+   ```
+
+2. Run the test suite:
+   ```bash
+   python -m pytest
+   ```
+
+3. Launch backend server:
+   ```bash
+   uvicorn app:app --reload --port 8000
+   ```
+   Open browser at: `http://localhost:8000`
+
+### Option B: Docker Compose
 
 ```bash
-uvicorn app:app --reload
+docker-compose up --build
 ```
-
-Open [http://localhost:8000](http://localhost:8000) in your browser.
+Access backend at `http://localhost:8000`.
 
 ---
 
-## Usage
+## 5. Production Cloud Deployment
 
-1. **Upload** a PDF report (annual report, financial report, placement report, etc.)
-2. **Ask** analytical questions in the input box
-3. **Review** the AI-generated analysis with source page references
+### 1. Database Setup (Supabase / Neon PostgreSQL)
+1. Create a PostgreSQL database instance on [Supabase](https://supabase.com) or [Neon](https://neon.tech).
+2. Copy the connection string into `DATABASE_URL`.
+3. The FastAPI app automatically runs non-destructive schema migrations on startup.
 
-### Example Questions
+### 2. File Storage Setup (Supabase Storage / AWS S3)
+1. Create an S3 bucket or Supabase Storage bucket named `documents`.
+2. Set `STORAGE_TYPE=s3` or `STORAGE_TYPE=supabase` along with access keys in environment variables.
 
-- Which department performed the best?
-- Compare revenue between 2023 and 2024.
-- Summarize placement statistics.
-- What are the key findings?
-- Which KPIs improved?
-- Generate an executive summary.
-- Identify major risks.
+### 3. FastAPI Backend Deployment (Render / Railway)
+1. Link your GitHub repository to [Render](https://render.com) or [Railway](https://railway.app).
+2. Choose **Docker** environment.
+3. Configure environment variables (`GROQ_API_KEY`, `PINECONE_API_KEY`, `DATABASE_URL`, `STORAGE_TYPE`, etc.).
+4. Deploy service. Note down your backend URL (e.g. `https://eda-backend.onrender.com`).
 
----
-
-## Project Structure
-
-```
-├── app.py              # FastAPI backend
-├── rag.py              # RAG engine (PDF → chunks → embeddings → LLM)
-├── config.py           # Configuration and constants
-├── templates/
-│   └── index.html      # Frontend HTML
-├── static/
-│   ├── style.css       # Stylesheet
-│   └── script.js       # Frontend logic
-├── uploads/            # Uploaded PDFs (auto-created)
-├── requirements.txt    # Python dependencies
-├── .env.example        # Environment variable template
-└── README.md           # This file
-```
+### 4. Next.js Frontend Deployment (Vercel)
+1. Import `frontend/` directory into [Vercel](https://vercel.com).
+2. Set Environment Variable:
+   ```env
+   NEXT_PUBLIC_API_URL=https://eda-backend.onrender.com
+   ```
+3. Deploy frontend.
 
 ---
 
-## Notes
+## 6. API Reference
 
-- Only **one PDF** is indexed at a time. Uploading a new document replaces the previous one.
-- The assistant only answers from the uploaded document. If the answer isn't in the document, it will say so.
-- The free Groq tier has rate limits — allow a few seconds between questions if you hit a limit.
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `GET` | `/api/health` | System health check and operational status |
+| `POST` | `/api/documents/upload` | Upload document file or ZIP archive (Rate: 10/min) |
+| `GET` | `/api/documents` | List all registered documents |
+| `GET` | `/api/documents/{id}/status` | Poll document ingestion stage status |
+| `GET` | `/api/documents/{id}/markdown` | Retrieve raw normalized Markdown representation |
+| `DELETE` | `/api/documents/{id}` | Delete document, stored files, DB records, and Pinecone namespace |
+| `POST` | `/api/chat/stream` | Stream Q&A answer via Server-Sent Events (SSE) (Rate: 20/min) |
+| `GET` | `/api/chat/{id}/history` | Retrieve recent chat history session |
+
+---
+
+## 7. Troubleshooting & Verification
+
+* **Tesseract OCR Error**: Ensure Tesseract binary is installed locally (`apt-get install tesseract-ocr` or Windows installer) if analyzing image files (`.png`, `.jpg`).
+* **Pinecone Index Mismatch**: The backend automatically auto-detects vector dimension mismatches and re-initializes the index if needed.
+* **Rate Limits**: Rate limits are set to 10 uploads/min and 20 query streams/min. Customize limits in `backend/app/routes/upload.py` and `backend/app/routes/chat.py`.
