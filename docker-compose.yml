@@ -1,16 +1,13 @@
 version: '3.8'
 
 services:
-  eda-assistant:
+  backend:
     build: .
-    container_name: eda_assistant_app
     ports:
       - "8000:8000"
-    environment:
-      - GROQ_API_KEY=${GROQ_API_KEY}
-      - PINECONE_API_KEY=${PINECONE_API_KEY}
-      - PINECONE_INDEX_NAME=${PINECONE_INDEX_NAME:-eda-assistant}
+    env_file:
+      - .env
     volumes:
       - ./uploads:/app/uploads
-      - ./eda_assistant.db:/app/eda_assistant.db
+      - ./processed:/app/processed
     restart: unless-stopped
