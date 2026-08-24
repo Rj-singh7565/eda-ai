@@ -567,22 +567,59 @@ body.theme-light .moon-icon { display: block; }
     margin-bottom: 0;
 }
 
-.assistant-bubble table {
+.table-responsive-wrapper {
     width: 100%;
-    border-collapse: collapse;
+    overflow-x: auto;
     margin: 14px 0;
-    font-size: 0.85rem;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: var(--bg-card);
+    box-shadow: var(--shadow-sm);
 }
 
-.assistant-bubble th, .assistant-bubble td {
-    padding: 8px 12px;
-    border: 1px solid var(--border-color);
+.assistant-bubble table, .table-responsive-wrapper table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.86rem;
+    color: var(--text-primary);
     text-align: left;
 }
 
-.assistant-bubble th {
+.assistant-bubble th, .table-responsive-wrapper th {
     background: var(--bg-hover);
     font-weight: 600;
+    color: var(--accent-primary);
+    padding: 10px 14px;
+    border-bottom: 2px solid var(--border-color);
+    border-right: 1px solid var(--border-color);
+    text-transform: capitalize;
+}
+
+.assistant-bubble th:last-child, .table-responsive-wrapper th:last-child {
+    border-right: none;
+}
+
+.assistant-bubble td, .table-responsive-wrapper td {
+    padding: 9px 14px;
+    border-bottom: 1px solid var(--border-color);
+    border-right: 1px solid var(--border-color);
+    line-height: 1.45;
+}
+
+.assistant-bubble td:last-child, .table-responsive-wrapper td:last-child {
+    border-right: none;
+}
+
+.assistant-bubble tr:last-child td, .table-responsive-wrapper tr:last-child td {
+    border-bottom: none;
+}
+
+.assistant-bubble tr:nth-child(even), .table-responsive-wrapper tr:nth-child(even) {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.assistant-bubble tr:hover, .table-responsive-wrapper tr:hover {
+    background: var(--accent-light);
 }
 
 /* Sources Accordion Section */
@@ -631,11 +668,13 @@ body.theme-light .moon-icon { display: block; }
     color: #ffffff;
 }
 
-/* ── Chat Input Bar ─────────────────────────────────────────────────── */
+/* ── Chat Input Bar (Top AI Chat Section) ───────────────────────────── */
 .chat-input-container {
-    padding: 16px 24px 20px 24px;
+    padding: 16px 24px 16px 24px;
     background: var(--bg-sidebar);
-    border-top: 1px solid var(--border-color);
+    border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0;
+    z-index: 5;
 }
 
 .chat-form {

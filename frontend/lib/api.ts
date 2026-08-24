@@ -1,6 +1,12 @@
-import { Document, UploadResponse, ChatMessage } from './types';
+import { Document, UploadResponse, ChatMessage, SystemHealth } from './types';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
+export async function fetchSystemHealth(): Promise<SystemHealth> {
+  const res = await fetch(`${API_BASE}/api/health`);
+  if (!res.ok) throw new Error('Failed to fetch system health');
+  return res.json();
+}
 
 export async function fetchDocuments(): Promise<Document[]> {
   const res = await fetch(`${API_BASE}/api/documents`);

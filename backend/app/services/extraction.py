@@ -200,7 +200,7 @@ def extract_excel(excel_path: str) -> List[Dict[str, Any]]:
             sheets_data.append({
                 "page": section_counter,
                 "page_label": label,
-                "text": f"### {label}\n\n{md_tbl}",
+                "text": md_tbl,
                 "tables": [md_tbl]
             })
             section_counter += 1
@@ -243,12 +243,12 @@ def extract_csv(csv_path: str) -> List[Dict[str, Any]]:
             matrix.append([str(val).strip() if pd.notna(val) else "" for val in row])
             
         md_tbl = extract_table_as_markdown(matrix)
-        label = f"Sheet 'Data' (Rows {start_idx + 1}-{end_idx})"
+        label = f"Rows {start_idx + 1}-{end_idx}"
         
         csv_data.append({
             "page": section_counter,
             "page_label": label,
-            "text": f"### {label}\n\n{md_tbl}",
+            "text": md_tbl,
             "tables": [md_tbl]
         })
         section_counter += 1

@@ -1,271 +1,182 @@
 ================================================================================
-           AI-BASED EDA ASSISTANT — OVERVIEW & TECHNICAL SPECIFICATION
+          AI-BASED EDA ASSISTANT — TECHNICAL PROJECT OVERVIEW
 ================================================================================
 
-1. PROJECT OVERVIEW & PURPOSE
------------------------------
-The AI-Based EDA (Exploratory Data Analysis) Assistant is an enterprise-grade, 
-decoupled Retrieval-Augmented Generation (RAG) system built to analyze organizational 
-reports, financial statements, annual filings, placement statistics, presentations, 
-spreadsheets, and other data-heavy documents across 10+ file formats.
-
-The system features a decoupled architecture with a FastAPI Python backend service 
-and a modern Next.js / React TypeScript split-pane frontend workspace. Users can upload 
-documents (individually or in bulk via ZIP archives), switch between documents in an 
-interactive sidebar, inspect normalized Markdown views, submit natural-language 
-queries, and receive real-time streaming answers with page/slide/row citations.
+1. EXECUTIVE SUMMARY & PROJECT PURPOSE
+--------------------------------------
+• Purpose: Enterprise RAG (Retrieval-Augmented Generation) document intelligence system.
+• Core Goal: Analyze complex, multi-format organizational documents (financial reports, 
+  placement stats, annual filings, spreadsheets, presentations, and OCR images).
+• Key Interface Feature: Swapped workspace layout positioning the AI Chat input controls 
+  at the top and displaying clean, data-driven table answers in the main workspace pane below.
+• Output Guarantee: Strict Markdown/HTML table output with complete sanitization of internal 
+  metadata bracket labels (such as `[Sheet 'Data' (Rows 1-39) Table]`).
 
 
-2. KEY FEATURES & DECOUPLED ARCHITECTURE
-----------------------------------------
-- Decoupled Next.js / React Frontend: Modular split-pane UI built with Next.js 14, 
-  React 18, and TypeScript. Features dark/light themes via CSS custom properties, 
-  drag-and-drop file ingestion zone, real-time stage progress bars, Markdown viewer, 
-  and citation drawer.
-- Modular FastAPI Backend: Scalable backend organized into clear domain layers:
-  * API Routes (`backend/app/routes/`): `upload`, `documents`, `chat`, `health`
-  * Core Services (`backend/app/services/`): `extraction`, `normalization`, `chunking`, 
-    `embeddings`, `vector_store`, `llm`, `retrieval`, `ingestion`, `storage`
-  * Database Layer (`backend/app/database/`): SQLite engine with safe schema migrations
-- Root Compatibility Layer: Root wrapper files (`app.py`, `ingestion.py`, `retrieval.py`, 
-  `database.py`, `rag.py`, `config.py`) delegate directly to `backend/app/` to maintain 
-  full backward compatibility for `uvicorn app:app` and Pytest execution.
-- Multi-Format Ingestion: Deep text & table extraction for PDF, DOCX, PPTX, XLSX, CSV, 
-  TXT, Markdown (.md), and Images (PNG/JPG/JPEG/BMP/TIFF via Tesseract OCR).
-- ZIP Batch Processing: Drag-and-drop .zip archives (up to 15 files). Archive contents 
-  are unpacked, format-validated via binary magic bytes, and ingested in background tasks.
-- Binary Magic Byte Detection: File payloads are verified using binary header inspection 
-  before extension fallbacks to prevent malicious or corrupted file processing.
-- Pinecone Namespace Isolation: Embeddings and metadata are strictly isolated per 
-  document using Pinecone namespaces (`namespace=doc_id`).
-- Canonical Markdown Normalization: Standardizes extracted data into clean Markdown 
-  with structured YAML front matter persisted to `processed/{doc_id}.md`.
-- Sentence-Aware Chunking: Headings-aware Markdown chunking that preserves tables 
-  intact as dedicated table chunks while splitting narrative text by paragraph/sentence 
-  boundaries (~600 chars, 80 overlap).
-- Similarity Threshold Filtering: Filters out low-confidence vector matches 
-  (score < 0.35) to mitigate LLM hallucinations.
-- Token-by-Token SSE Streaming: Real-time Server-Sent Events (SSE) streaming powered 
-  by Groq's Meta Llama 3.3 70B model.
-- Conversational Session Memory: Retains recent Q&A turns per document for context-aware 
-  follow-up conversations.
-- Optimistic UI Document Deletion: Instant client-side sidebar removal (<10ms) while 
-  backend handles DB deletion and offloads filesystem and Pinecone cleanup to background 
-  threads. Polling race condition guards prevent deleted docs from re-appearing.
-- Rate Limiting & Resilience: Integrated rate limiting via `slowapi` and exponential 
-  backoff retries using `tenacity`.
+2. KEY FEATURES & CAPABILITIES
+------------------------------
+• Swapped AI Chat & Answer Layout:
+  - Top AI Chat Input Bar: Query textarea & suggested analytical chips placed at top.
+  - Main Answer Workspace: Renders clean table outputs directly below the prompt bar.
+
+• Strict Table Output & Data Cleanliness:
+  - Exclusive Table Response: Prompts LLM to return strictly Markdown tables.
+  - Zero Internal Noise: Filters out chunk headers, sheet names, and raw metadata.
+
+• Decoupled Architecture:
+  - Python FastAPI Backend: High-performance REST & SSE streaming server.
+  - Next.js 14 Frontend: Split-pane React workspace with dark/light themes.
+  - Root Compatibility Layer: Enables direct backward-compatible execution (`app.py`).
+
+• Multi-Format Ingestion Engine:
+  - 10+ File Extensions Supported: PDF, DOCX, PPTX, XLSX, CSV, TXT, MD, PNG, JPG, ZIP.
+  - Binary Magic Byte Inspector: Verifies file headers to detect format spoofing.
+  - ZIP Batch Extractor: Unpacks and processes up to 15 documents concurrently.
+
+• Enterprise Vector Search & RAG Pipeline:
+  - Canonical Markdown Normalization: Standardizes parsed documents into structured Markdown.
+  - Sentence & Table-Aware Chunking: Preserves data tables intact during chunking (~600 chars).
+  - Pinecone Vector Storage: Namespaced per document (`namespace=doc_id`) with score filtering (>0.35).
+  - Groq Llama 3.3 70B Streaming: Real-time token streaming via Server-Sent Events (SSE).
 
 
 3. SYSTEM ARCHITECTURE & TECH STACK
 ----------------------------------
-+---------------------+---------------------------------------------------------+
-| Component           | Technology / Library Used                               |
-+---------------------+---------------------------------------------------------+
-| Backend Framework   | Python 3.12+, FastAPI, Uvicorn, Pydantic v2, slowapi    |
-| Frontend Framework  | Next.js 14, React 18, TypeScript, Vanilla CSS           |
-| Database            | SQLite3 (`eda_assistant.db`) with PRAGMA safe migrations|
-| Vector Database     | Pinecone (Serverless Index, Cosine Similarity, Namespaced)|
-| LLM Engine          | Groq API (Meta Llama 3.3 70B Versatile SSE Streaming)   |
-| Embedding Model     | SentenceTransformers (BAAI/bge-small-en-v1.5, 384-dim)  |
-| PDF Parsing         | pdfplumber (tables) + PyPDF (narrative text)            |
-| Word (DOCX) Parsing | python-docx (paragraphs, tables, section boundaries)    |
-| PowerPoint (PPTX)   | python-pptx (slide content, tables, speaker notes)      |
-| Excel & CSV Parsing | pandas + openpyxl (50-row batch Markdown tables)        |
-| Image OCR           | pytesseract + Pillow (PNG/JPG/JPEG/BMP/TIFF)            |
-| Resiliency & Retries| Tenacity (Exponential Backoff Retries)                  |
-| Containerization    | Docker, Docker Compose                                  |
-| Test Suite          | Pytest (unit & integration tests)                       |
-+---------------------+---------------------------------------------------------+
++----------------------+--------------------------------------------------------+
+| Domain / Layer       | Technologies & Libraries                               |
++----------------------+--------------------------------------------------------+
+| Backend Framework    | Python 3.12+, FastAPI, Uvicorn, Pydantic v2, SlowAPI   |
+| Frontend Workspace   | Next.js 14, React 18, TypeScript, Vanilla CSS           |
+| Database Storage     | SQLite3 (`eda_assistant.db`) with auto schema migration|
+| Vector Store         | Pinecone Serverless Index (Cosine Similarity)          |
+| LLM Engine           | Groq API (Meta Llama 3.3 70B Versatile SSE Streaming)  |
+| Embedding Model      | SentenceTransformers (`BAAI/bge-small-en-v1.5`, 384-d) |
+| PDF Extraction       | pdfplumber (table matrix) + PyPDF (text body)          |
+| Word Extraction      | python-docx (paragraphs, tables, section boundaries)   |
+| Presentation Extraction| python-pptx (slide frames, tables, speaker notes)     |
+| Spreadsheet Parsing  | pandas + openpyxl (50-row batch Markdown tables)       |
+| Image OCR            | pytesseract + Pillow (PNG/JPG/JPEG/BMP/TIFF)           |
+| Resiliency & Retries | Tenacity Exponential Backoff                           |
+| Test Suite           | Pytest (unit & integration tests)                      |
++----------------------+--------------------------------------------------------+
 
 
-4. SUPPORTED DOCUMENT FORMATS
-----------------------------------
-+-------------+----------------+---------------------------------------------------+
-| Extension   | Detected Type  | Extraction Method                                 |
-+-------------+----------------+---------------------------------------------------+
-| .pdf        | pdf            | PyPDF text + pdfplumber table extraction          |
-| .docx       | docx           | python-docx paragraphs & tables (section split)   |
-| .pptx       | pptx           | python-pptx slide text, tables, speaker notes     |
-| .xlsx/.xls  | excel          | pandas + openpyxl (multi-sheet, 50-row batches)   |
-| .csv        | csv            | pandas with multi-encoding fallback               |
-| .txt/.log   | txt            | Plain text with encoding fallback                 |
-| .md         | md             | Markdown with encoding fallback                   |
-| .png/.jpg   | image          | pytesseract OCR text extraction                   |
-| .jpeg/.bmp  | image          | pytesseract OCR text extraction                   |
-| .tiff       | image          | pytesseract OCR text extraction                   |
-| .zip        | zip            | Batch extraction (up to 15 files per archive)     |
-+-------------+----------------+---------------------------------------------------+
+4. SUPPORTED FILE FORMATS & EXTRACTION MATRIX
+---------------------------------------------
++------------+----------------+--------------------------------------------------+
+| Extension  | Document Type  | Processing Strategy                              |
++------------+----------------+--------------------------------------------------+
+| .pdf       | PDF Document   | PyPDF text extraction + pdfplumber table matrix  |
+| .docx      | Word File      | python-docx paragraph blocks & table matrices    |
+| .pptx      | Presentation   | python-pptx slide text, tables & speaker notes   |
+| .xlsx/.xls | Spreadsheet    | pandas sheet reader into 50-row batch tables     |
+| .csv       | CSV Data       | Multi-encoding reader into Markdown tables       |
+| .txt/.log  | Plain Text     | UTF-8 / Latin-1 encoding fallback text reader    |
+| .md        | Markdown       | Direct canonical Markdown parser                 |
+| .png/.jpg  | Image          | Tesseract OCR text extraction                    |
+| .zip       | ZIP Archive    | Batch unpacking & magic byte format validation   |
++------------+----------------+--------------------------------------------------+
 
 
 5. STEP-BY-STEP WORKING MECHANISM
 ----------------------------------
+• Step 1: Upload & Format Validation
+  - User submits file or ZIP archive via frontend UploadZone.
+  - Backend verifies binary magic bytes and file size limit (<= 25MB).
 
-[ PHASE 1: DOCUMENT UPLOAD & VALIDATION ]
-1. File Upload (/upload):
-   - Drag-and-drop or select file(s) via the frontend UploadZone component.
-   - Backend checks file size (<= 25MB) and executes binary magic byte inspection 
-     (`storage.py` / `ingestion.py`).
-   - For `.zip` archives: entries are extracted, format-validated, registered with 
-     their own `doc_id`, and dispatched to independent background ingestion tasks.
+• Step 2: Extraction & Markdown Normalization
+  - Format-specific extractor converts raw file into structured text blocks and tables.
+  - Normalizer builds canonical Markdown file with YAML metadata at `processed/{doc_id}.md`.
 
-[ PHASE 2: DOCUMENT INGESTION PIPELINE ]
-2. Extractor Dispatch & Markdown Normalization (`extraction.py`, `normalization.py`):
-   - Extractor parses raw structure into uniform page/slide/row text blocks and tables.
-   - Normalizer constructs canonical Markdown file with YAML front matter metadata.
-   - Normalized Markdown saved to `processed/{doc_id}.md`.
+• Step 3: Chunking, Embedding & Vector Upsert
+  - Markdown text is chunked using sentence-aware splitting (~600 chars, 80 overlap).
+  - Tables are kept intact as single chunk units.
+  - `bge-small-en-v1.5` generates 384-d vectors, upserted to Pinecone under `namespace=doc_id`.
 
-3. Sentence-Aware Chunking & Embedding (`chunking.py`, `embeddings.py`, `vector_store.py`):
-   - Markdown structure is chunked preserving tables intact as table blocks.
-   - `bge-small-en-v1.5` model generates 384-dimensional embeddings for each chunk.
-   - Vectors upserted to Pinecone under `namespace=doc_id`.
-   - Ingestion status updated in SQLite: `parsing` → `chunking` → `embedding` → `indexing` → `ready`.
+• Step 4: RAG Retrieval & Similarity Guard
+  - User query is embedded and searched against Pinecone index.
+  - Low-confidence matches (<0.35 similarity score) are automatically filtered out.
 
-[ PHASE 3: RAG RETRIEVAL & STREAMING ]
-4. Query Retrieval & Similarity Threshold (`retrieval.py`):
-   - User query embedded and queried against Pinecone `namespace=doc_id`.
-   - Results scored below 0.35 similarity threshold are discarded.
-
-5. SSE Answer Streaming & Citation Drawer (`llm.py`, `ChatWindow.tsx`):
-   - Recent conversation turns (up to 4) retrieved from SQLite `chat_history`.
-   - Groq API streams answer tokens over SSE to Next.js frontend.
-   - Interactive citation chips rendered; clicking opens citation drawer showing exact source context and score.
-
-[ PHASE 4: DOCUMENT MANAGEMENT & POLICIES ]
-6. Optimistic Document Deletion (`documents.py`, `DocumentSidebar.tsx`):
-   - Frontend removes document immediately from sidebar state (<10ms).
-   - Backend deletes SQLite records (<1ms) and delegates file/Pinecone cleanup to background tasks.
-   - Polling guards prevent race conditions.
+• Step 5: Clean SSE Answer Streaming & Table Rendering
+  - Excerpts are sanitized of internal `[Sheet ...]`, `[Page ...]` tags before LLM prompt assembly.
+  - Groq API streams answer strictly as a Markdown table.
+  - Frontend renders responsive HTML `<table>` elements with styled headers and borders.
 
 
-6. PROJECT FILE STRUCTURE
--------------------------
-├── backend/                  # FastAPI Modular Backend System
-│   └── app/
-│       ├── main.py           # FastAPI app instance, CORS middleware, route mounts
-│       ├── config.py         # Global parameters, paths, environment variables
-│       ├── database/         # Database persistence layer
-│       │   ├── database.py   # SQLite connection manager, schema setup, CRUD operations
-│       │   └── models.py     # Database schema models (documents, chat_history)
-│       ├── routes/           # REST & Streaming endpoints
-│       │   ├── upload.py     # File & ZIP upload handling, format validation
-│       │   ├── documents.py  # Document listing, Markdown retrieval, deletion
-│       │   ├── chat.py       # Query streaming endpoint (/ask/stream) & history
-│       │   └── health.py     # System health check endpoint (/health)
-│       └── services/         # Business logic & RAG pipeline engines
-│           ├── extraction.py # Multi-format extractors (PDF, DOCX, PPTX, Excel, OCR)
-│           ├── normalization.py # Canonical Markdown generator with YAML front matter
-│           ├── chunking.py   # Sentence-aware Markdown chunking engine
-│           ├── embeddings.py # SentenceTransformer embedding wrapper (bge-small-en-v1.5)
-│           ├── vector_store.py # Pinecone vector store manager (upsert, query, delete)
-│           ├── llm.py        # Groq Llama 3.3 70B SSE streaming integration
-│           ├── retrieval.py  # RAG retrieval manager with score threshold filtering
-│           ├── ingestion.py  # End-to-end background ingestion pipeline coordinator
-│           └── storage.py    # Local file management (uploads/, processed/)
-│
-├── frontend/                 # Next.js 14 / React TypeScript Workspace
-│   ├── app/                  # Next.js App Router
-│   │   ├── layout.tsx        # HTML root layout & theme wrapper
-│   │   ├── page.tsx          # Main split-pane application interface
-│   │   └── globals.css       # Design system CSS (custom variables, dark/light themes)
-│   ├── components/           # Modular React components
-│   │   ├── DocumentSidebar.tsx # Sidebar with doc list, active status, delete buttons
-│   │   ├── UploadZone.tsx    # Drag-and-drop upload container with progress state
-│   │   ├── ProcessingStatus.tsx # Stage status progress bar (parsing -> ready)
-│   │   ├── DocumentHeader.tsx  # Workspace header & doc metadata action bar
-│   │   ├── ChatWindow.tsx    # Main chat container with messages & auto-scroll
-│   │   ├── ChatMessage.tsx   # Markdown chat bubbles & citation chips
-│   │   ├── ChatInput.tsx     # Message input box with send button
-│   │   ├── CitationCard.tsx  # Citation side-drawer for chunk inspection
-│   │   └── DocumentViewer.tsx# In-app Markdown document preview modal
-│   └── lib/                  # Utilities & API client
-│       ├── api.ts            # Backend HTTP & SSE streaming API client
-│       └── types.ts          # TypeScript interfaces (Document, ChatMessage, Citation)
-│
-├── root compatibility wrappers / entrypoints:
-├── app.py                    # Root FastAPI entrypoint (delegates to backend/app/main.py)
-├── config.py                 # Root config import (delegates to backend/app/config.py)
-├── database.py               # Root database import (delegates to backend/app/database/database.py)
-├── ingestion.py              # Root ingestion import (delegates to backend/app/services/ingestion.py)
-├── retrieval.py              # Root retrieval import (delegates to backend/app/services/retrieval.py)
-├── rag.py                    # Root RAG entrypoint wrapper
-│
-├── tests/                    # Pytest Integration & Unit Test Suite
-│   ├── test_pipeline.py      # End-to-end RAG pipeline tests
-│   ├── test_multi_format.py  # Extraction tests across file types
-│   └── test_normalization.py # Markdown normalization & chunking tests
-│
-├── uploads/                  # Raw uploaded document storage directory
-├── processed/                # Normalized Markdown files ({doc_id}.md)
-├── eda_assistant.db          # SQLite relational database
-├── PROJECT_OVERVIEW.txt      # Detailed technical specification (this file)
-├── README.md                 # Project README and quickstart guide
-├── requirements.txt          # Python dependencies
-├── Dockerfile                # Backend containerization file
-├── docker-compose.yml        # Docker compose configuration
-├── .env                      # Local environment variable configuration
-└── .env.example              # Template environment variables
+6. FILE & DIRECTORY STRUCTURE
+------------------------------
+• `backend/app/`           - Core FastAPI application package
+  - `main.py`              - App initialization, CORS, middleware, router mounts
+  - `config.py`            - System settings, environment variables, paths
+  - `database/`            - SQLite connection manager, schema models, migrations
+  - `routes/`              - Endpoint modules (`upload.py`, `documents.py`, `chat.py`, `health.py`)
+  - `services/`            - Extraction, chunking, embeddings, vector store, LLM & retrieval
+
+• `frontend/`              - Next.js 14 TypeScript web client
+  - `app/`                 - Next.js App Router (`page.tsx`, `layout.tsx`, `globals.css`)
+  - `components/`          - Modular UI (`DocumentSidebar.tsx`, `ChatWindow.tsx`, `ChatMessage.tsx`, `ChatInput.tsx`)
+  - `lib/`                 - API client (`api.ts`), type declarations (`types.ts`)
+
+• `templates/` & `static/` - Root HTML/CSS/JS interface (`index.html`, `script.js`, `style.css`)
+• `app.py`                 - Root wrapper entrypoint for backend execution
+• `tests/`                - Pytest suite (`test_pipeline.py`, `test_multi_format.py`, `test_normalization.py`)
 
 
-7. API ENDPOINTS
--------------------------
-+--------+-----------------------------------+------------------------------------------+
-| Method | Path                              | Description                              |
-+--------+-----------------------------------+------------------------------------------+
-| GET    | /health                           | Health status check                      |
-| POST   | /upload                           | Upload document or ZIP (rate: 10/min)    |
-| GET    | /status/{doc_id}                  | Poll ingestion status for a document     |
-| GET    | /documents                        | List all registered documents             |
-| GET    | /documents/{doc_id}/history       | Retrieve chat history for a document     |
-| GET    | /documents/{doc_id}/markdown      | View normalized Markdown representation  |
-| DELETE | /documents/{doc_id}               | Delete document and associated resources |
-| POST   | /ask/stream                       | Stream Q&A response via SSE (rate: 20/min)|
-+--------+-----------------------------------+------------------------------------------+
+7. API ENDPOINT REFERENCE
+--------------------------
++--------+----------------------------+-------------------------------------------------+
+| Method | Endpoint Path              | Purpose / Description                           |
++--------+----------------------------+-------------------------------------------------+
+| GET    | `/health`                  | Health check status endpoint                    |
+| POST   | `/upload`                  | Upload document or ZIP archive (Rate: 10/min)   |
+| GET    | `/status/{doc_id}`         | Poll ingestion progress state                   |
+| GET    | `/documents`               | List all active uploaded documents              |
+| GET    | `/documents/{doc_id}/history`| Retrieve chat Q&A history for document        |
+| GET    | `/documents/{doc_id}/markdown`| Retrieve normalized Markdown content       |
+| DELETE | `/documents/{doc_id}`      | Delete document record, files & Pinecone vectors|
+| POST   | `/ask/stream`              | Stream answer tokens via SSE (Rate: 20/min)     |
++--------+----------------------------+-------------------------------------------------+
 
 
-8. HOW TO RUN THE PROJECT
--------------------------
-Option A: Local Development (Decoupled Frontend + Backend)
-1. Configure Environment:
-   Ensure `.env` contains:
-   GROQ_API_KEY=your_groq_api_key
-   PINECONE_API_KEY=your_pinecone_api_key
-   PINECONE_INDEX_NAME=eda-assistant
+8. HOW TO RUN THE PROJECT & LIVE PORT STATUS
+---------------------------------------------
+• Active Server Status:
+  - Backend Server: RUNNING on http://localhost:8000 (Python app.py via Uvicorn)
+  - Frontend Workspace: RUNNING on http://localhost:3000 (Next.js Dev Server)
 
-2. Start FastAPI Backend:
-   python -m venv venv
-   venv\Scripts\activate          (Windows)
-   pip install -r requirements.txt
-   .\venv\Scripts\uvicorn.exe app:app --reload --port 8000
+• Execution Commands:
+  - Run Both Servers Concurrently:
+    npm run dev
 
+  - Run FastAPI Backend Independently:
+    venv\Scripts\python.exe app.py
 
-3. Start Next.js Frontend:
-   cd frontend
-   npm install
-   npm run dev
+  - Run Next.js Frontend Independently:
+    cd frontend
+    npm run dev
 
-4. Access Application:
-   Open http://localhost:3000 (Frontend) or http://localhost:8000 (Backend API docs at /docs)
+  - Run Automated Pytest Suite:
+    venv\Scripts\python.exe -m pytest
 
-Option B: Docker Compose
-1. Ensure `.env` is configured.
-2. Run: docker-compose up --build
-3. Open browser: http://localhost:8000
+• Application Access URLs:
+  - Next.js Workspace: http://localhost:3000
+  - FastAPI Backend / Swagger Docs: http://localhost:8000/docs
 
 
-9. CONFIGURATION PARAMETERS
--------------------------
-+-------------------------+-------------------+-------------------------------------+
-| Parameter               | Default Value     | Description                         |
-+-------------------------+-------------------+-------------------------------------+
-| EMBEDDING_MODEL         | bge-small-en-v1.5 | SentenceTransformer model name      |
-| EMBEDDING_DIMENSION     | 384               | Vector dimension                    |
-| LLM_MODEL               | llama-3.3-70b     | Groq LLM model name                 |
-| CHUNK_SIZE              | 600               | Target characters per chunk         |
-| CHUNK_OVERLAP           | 80                | Overlap between chunks              |
-| TOP_K                   | 5                 | Chunks retrieved per query          |
-| SIMILARITY_THRESHOLD    | 0.35              | Minimum score to include a chunk    |
-| MAX_FILE_SIZE_MB        | 25                | Maximum upload file size            |
-| MAX_ZIP_FILES           | 15                | Maximum files per ZIP archive       |
-| MEMORY_TURNS            | 4                 | Q&A turns retained per session      |
-+-------------------------+-------------------+-------------------------------------+
+9. SYSTEM CONFIGURATION PARAMETERS
+-----------------------------------
++-------------------------+----------------------+------------------------------------+
+| Parameter               | Default Value        | Purpose / Description              |
++-------------------------+----------------------+------------------------------------+
+| EMBEDDING_MODEL         | bge-small-en-v1.5    | SentenceTransformer embedding model|
+| EMBEDDING_DIMENSION     | 384                  | Vector dimension                   |
+| LLM_MODEL               | llama-3.1-8b-instant | Groq primary LLM model             |
+| CHUNK_SIZE              | 600                  | Target characters per text chunk   |
+| CHUNK_OVERLAP           | 80                   | Overlap character count            |
+| TOP_K                   | 5                    | Vector chunks retrieved per query  |
+| SIMILARITY_THRESHOLD    | 0.35                 | Minimum score threshold to keep    |
+| MAX_FILE_SIZE_MB        | 25                   | Maximum file size limit (MB)       |
+| MAX_ZIP_FILES           | 15                   | Max files per ZIP archive          |
+| MEMORY_TURNS            | 4                    | Session chat turns retained        |
++-------------------------+----------------------+------------------------------------+
 ================================================================================
