@@ -8,70 +8,68 @@ interface ChatWindowProps {
   messages: ChatMessageType[];
   activeDocReady: boolean;
   onSampleClick: (query: string) => void;
-  onCitationClick: (citation: Citation) => void;
+  onCitationClick: (citationId: string) => void;
+  onClearChat?: () => void;
 }
 
 export default function ChatWindow({
   messages,
   activeDocReady,
   onSampleClick,
-  onCitationClick
+  onCitationClick,
+  onClearChat
 }: ChatWindowProps) {
-  if (!activeDocReady && messages.length === 0) {
-    return (
-      <div className="chat-container" style={{ justifyContent: 'center', alignItems: 'center' }}>
-        <div style={{ textAlign: 'center', maxWidth: '420px', color: 'var(--text-secondary)' }}>
-          <div style={{ fontSize: '2.5rem', marginBottom: '12px' }}>📊</div>
-          <h2 style={{ fontSize: '1.2rem', color: 'var(--text-primary)', marginBottom: '8px' }}>
-            No Active Document Selected
-          </h2>
-          <p style={{ fontSize: '0.88rem', lineHeight: '1.5' }}>
-            Upload a PDF, DOCX, PPTX, Excel, CSV, or ZIP file from the sidebar to start asking natural-language analytical questions.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="chat-container">
-      {messages.length === 0 && activeDocReady && (
-        <div style={{ marginBottom: '20px' }}>
-          <h3 style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '10px' }}>
-            Suggested Analytical Queries
-          </h3>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-            {[
-              'Summarize key financial highlights and major revenue metrics.',
-              'What are the primary operational risks and key challenges mentioned?',
-              'Provide a breakdown of top performing departments and key KPIs.',
-              'Synthesize the executive summary and strategic recommendations.'
-            ].map((q, idx) => (
-              <button
-                key={idx}
-                onClick={() => onSampleClick(q)}
-                style={{
-                  background: 'var(--bg-card)',
-                  border: '1px solid var(--border-color)',
-                  color: 'var(--text-primary)',
-                  padding: '8px 14px',
-                  borderRadius: '20px',
-                  fontSize: '0.82rem',
-                  cursor: 'pointer',
-                  transition: 'var(--transition-fast)'
-                }}
-              >
-                💡 {q}
-              </button>
-            ))}
-          </div>
+    <div className="col-chat">
+      {/* Header */}
+      <div className="chat-header">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span>AI Assistant</span>
+          <span style={{ fontSize: '0.85rem' }}>🪄</span>
         </div>
-      )}
+        <button className="new-chat-btn" onClick={onClearChat} title="Clear conversation history">
+          ⎘ New chat
+        </button>
+      </div>
 
-      <div className="chat-messages">
-        {messages.map((msg) => (
-          <ChatMessage key={msg.id} message={msg} onCitationClick={onCitationClick} />
-        ))}
+      {/* Feed */}
+      <div className="chat-feed">
+        {messages.length === 0 ? (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', margin: 'auto 0', padding: '24px', textAlign: 'center', color: 'var(--muted)' }}>
+            <div style={{ fontSize: '2rem', marginBottom: '8px' }}>💬</div>
+            <div style={{ fontWeight: 600, color: 'var(--ink)', fontSize: '0.95rem', marginBottom: '4px' }}>
+              Ask your Assistant
+            </div>
+            <div style={{ fontSize: '0.8rem', maxWidth: '280px' }}>
+              Upload or select a document to ask natural language questions with precise page citations.
+            </div>
+          </div>
+        ) : (
+          messages.map((msg) => (
+            <ChatMessage
+              key={msg.id}
+              message={msg}
+              onCitationClick={(cit: Citation) => onCitationClick(cit.id)}
+            />
+          ))
+        )}
+
+        {/* Suggested Prompts */}
+        <div className="prompt-suggestions" style={{ marginTop: 'auto', paddingTop: '16px' }}>
+          {[
+            'Show placement stats by branch',
+            'Show financial summary',
+            'How many students graduated?'
+          ].map((prompt, idx) => (
+            <button
+              key={idx}
+              className="suggestion-chip"
+              onClick={() => onSampleClick(prompt)}
+            >
+              &rarr; {prompt}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );

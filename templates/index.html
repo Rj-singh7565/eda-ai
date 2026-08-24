@@ -107,24 +107,8 @@
                 </div>
             </header>
 
-            <!-- Chat Messages Container -->
-            <div id="chat-container" class="chat-container">
-
-                <!-- Empty State (No Document Selected) -->
-                <div id="empty-state" class="empty-state">
-                    <div class="empty-icon">
-                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                            <polyline points="14 2 14 8 20 8"/>
-                            <line x1="16" y1="13" x2="8" y2="13"/>
-                            <line x1="16" y1="17" x2="8" y2="17"/>
-                            <polyline points="10 9 9 9 8 9"/>
-                        </svg>
-                    </div>
-                    <h2>No Active Document Selected</h2>
-                    <p>Upload a new PDF report or select an existing document from the left sidebar to start analyzing data.</p>
-                </div>
-
+            <!-- Top AI Chat & Query Controls Section -->
+            <div class="chat-input-container top-chat-input-container">
                 <!-- Active Document Welcome & Sample Queries (Shown when document is ready) -->
                 <div id="doc-welcome-chips" class="doc-welcome-chips" hidden>
                     <h3>Suggested Analytical Queries</h3>
@@ -144,14 +128,6 @@
                     </div>
                 </div>
 
-                <!-- Chat Thread Messages list -->
-                <div id="chat-messages" class="chat-messages">
-                    <!-- Dynamic chat bubbles rendered by JS -->
-                </div>
-            </div>
-
-            <!-- Sticky Chat Input Container -->
-            <div class="chat-input-container">
                 <form id="chat-form" class="chat-form">
                     <textarea 
                         id="question-input" 
@@ -173,27 +149,31 @@
                     <span>Ask custom questions • Press <kbd>Enter ↵</kbd> to send • <kbd>Shift + Enter</kbd> for newline</span>
                 </div>
             </div>
+
+            <!-- Answer Section & Chat Messages Container (Main View Below Input) -->
+            <div id="chat-container" class="chat-container">
+
+                <!-- Empty State (No Document Selected) -->
+                <div id="empty-state" class="empty-state">
+                    <div class="empty-icon">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                            <polyline points="14 2 14 8 20 8"/>
+                            <line x1="16" y1="13" x2="8" y2="13"/>
+                            <line x1="16" y1="17" x2="8" y2="17"/>
+                            <polyline points="10 9 9 9 8 9"/>
+                        </svg>
+                    </div>
+                    <h2>No Active Document Selected</h2>
+                    <p>Upload a new PDF report or select an existing document from the left sidebar to start analyzing data.</p>
+                </div>
+
+                <!-- Chat Thread Messages & Table Answer Feed -->
+                <div id="chat-messages" class="chat-messages">
+                    <!-- Dynamic chat bubbles rendered by JS -->
+                </div>
+            </div>
         </main>
-
-        <!-- Interactive Citation Side Drawer -->
-        <aside id="citation-drawer" class="citation-drawer" hidden>
-            <div class="drawer-header">
-                <h3>Source Excerpt</h3>
-                <button id="close-drawer" class="icon-btn" aria-label="Close Source Drawer">&times;</button>
-            </div>
-            <div class="drawer-body">
-                <div class="drawer-meta">
-                    <span id="drawer-pages" class="drawer-badge">Page --</span>
-                    <span id="drawer-score" class="drawer-score">Score: --</span>
-                </div>
-                <div id="drawer-content" class="drawer-content">
-                    <!-- Rendered raw chunk text -->
-                </div>
-            </div>
-        </aside>
-
-        <!-- Backdrop overlay for citation drawer -->
-        <div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
 
         <!-- Markdown Preview Modal -->
         <div id="markdown-modal-backdrop" class="markdown-modal-backdrop" hidden>

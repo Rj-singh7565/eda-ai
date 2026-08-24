@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 
 interface DocumentViewerProps {
   isOpen: boolean;
@@ -10,11 +10,14 @@ interface DocumentViewerProps {
 }
 
 export default function DocumentViewer({ isOpen, filename, markdownContent, onClose }: DocumentViewerProps) {
+  const [copied, setCopied] = useState(false);
+
   if (!isOpen) return null;
 
   const handleCopy = () => {
     navigator.clipboard.writeText(markdownContent);
-    alert('Markdown content copied to clipboard!');
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   const handleDownload = () => {
@@ -31,39 +34,64 @@ export default function DocumentViewer({ isOpen, filename, markdownContent, onCl
     <div
       style={{
         position: 'fixed',
-        top: 0,
-        left: 0,
-        width: '100vw',
-        height: '100vh',
-        backgroundColor: 'rgba(0,0,0,0.6)',
+        inset: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.65)',
+        backdropFilter: 'blur(8px)',
         display: 'flex',
         justifyContent: 'center',
         alignItems: 'center',
-        zIndex: 200
+        zIndex: 200,
+        animation: 'fadeIn 0.2s ease-out'
       }}
     >
       <div
         style={{
-          width: '75%',
-          height: '80%',
+          width: '80%',
+          maxWidth: '1000px',
+          height: '82%',
           backgroundColor: 'var(--bg-sidebar)',
           border: '1px solid var(--border-color)',
-          borderRadius: '12px',
+          borderRadius: 'var(--radius-lg)',
           display: 'flex',
           flexDirection: 'column',
-          overflow: 'hidden'
+          overflow: 'hidden',
+          boxShadow: 'var(--shadow-lg)'
         }}
       >
-        <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h3>Document Markdown — {filename}</h3>
-          <div style={{ display: 'flex', gap: '10px' }}>
-            <button onClick={handleCopy} className="btn-primary" style={{ padding: '4px 12px', fontSize: '0.8rem' }}>📋 Copy</button>
-            <button onClick={handleDownload} className="btn-primary" style={{ padding: '4px 12px', fontSize: '0.8rem' }}>⬇️ Download .md</button>
-            <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-primary)', fontSize: '1.2rem', cursor: 'pointer' }}>&times;</button>
+        <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-glass)' }}>
+          <div>
+            <h3 style={{ fontFamily: 'var(--font-heading)', fontSize: '1.1rem', fontWeight: 700 }}>Canonical Markdown — {filename}</h3>
+            <span style={{ fontSize: '0.73rem', color: 'var(--text-muted)' }}>Normalized YAML Frontmatter + Structured Text</span>
+          </div>
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+            <button onClick={handleCopy} className="btn-primary" style={{ padding: '6px 14px', fontSize: '0.8rem', borderRadius: '8px' }}>
+              {copied ? '✅ Copied' : '📋 Copy'}
+            </button>
+            <button onClick={handleDownload} className="btn-primary" style={{ padding: '6px 14px', fontSize: '0.8rem', borderRadius: '8px' }}>
+              ⬇️ Download .md
+            </button>
+            <button
+              onClick={onClose}
+              style={{
+                background: 'rgba(255, 255, 255, 0.06)',
+                border: '1px solid var(--border-color)',
+                color: 'var(--text-primary)',
+                width: '32px',
+                height: '32px',
+                borderRadius: '8px',
+                fontSize: '1.2rem',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}
+            >
+              &times;
+            </button>
           </div>
         </div>
-        <div style={{ flex: 1, padding: '20px', overflowY: 'auto', backgroundColor: 'var(--bg-app)' }}>
-          <pre style={{ fontFamily: 'var(--font-mono)', fontSize: '0.88rem', whiteSpace: 'pre-wrap', color: 'var(--text-primary)' }}>
+        <div style={{ flex: 1, padding: '24px', overflowY: 'auto', backgroundColor: 'var(--bg-app)' }}>
+          <pre style={{ fontFamily: 'var(--font-mono)', fontSize: '0.88rem', lineHeight: '1.65', whiteSpace: 'pre-wrap', color: 'var(--text-primary)' }}>
             {markdownContent}
           </pre>
         </div>

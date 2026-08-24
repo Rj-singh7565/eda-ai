@@ -37,11 +37,11 @@ def validate_config():
 # ── Models ────────────────────────────────────────────────────────────
 EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
 EMBEDDING_DIMENSION = 384
-LLM_MODEL = "llama-3.3-70b-versatile"
+LLM_MODEL = os.getenv("LLM_MODEL", "groq/compound-mini")
 
 # ── Chunking & Retrieval Parameters ──────────────────────────────────
 CHUNK_SIZE = 600       # Target characters per chunk
-CHUNK_OVERLAP = 80     # Overlap between chunks
+CHUNK_OVERLAP = 100    # Overlap between chunks
 TOP_K = 5              # Number of chunks retrieved per query
 SIMILARITY_THRESHOLD = 0.35 # Score threshold below which context is ignored
 

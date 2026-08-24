@@ -3,18 +3,18 @@
 import React, { useState } from 'react';
 
 interface ChatInputProps {
-  disabled: boolean;
-  onSend: (question: string) => void;
+  disabled?: boolean;
+  onSend: (text: string) => void;
 }
 
 export default function ChatInput({ disabled, onSend }: ChatInputProps) {
-  const [text, setText] = useState('');
+  const [input, setInput] = useState('');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!text.trim() || disabled) return;
-    onSend(text.trim());
-    setText('');
+    if (!input.trim() || disabled) return;
+    onSend(input.trim());
+    setInput('');
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -25,23 +25,34 @@ export default function ChatInput({ disabled, onSend }: ChatInputProps) {
   };
 
   return (
-    <div className="chat-input-container">
-      <form onSubmit={handleSubmit} className="chat-form">
+    <div className="chat-composer-box">
+      <form onSubmit={handleSubmit} className="composer-input-wrapper">
         <textarea
-          className="question-input"
-          placeholder={disabled ? 'Select or upload a ready document to start asking questions...' : 'Ask an analytical question about the active document...'}
-          rows={1}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
+          className="composer-textarea"
+          placeholder="Ask a question about your documents..."
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
           disabled={disabled}
+          rows={2}
         />
-        <button type="submit" className="btn-primary" disabled={disabled || !text.trim()}>
-          Send
-        </button>
+        <div className="composer-toolbar">
+          <span style={{ fontSize: '1rem', color: 'var(--muted)', cursor: 'pointer' }} title="Attach file">
+            📎
+          </span>
+          <button
+            type="submit"
+            disabled={!input.trim() || disabled}
+            className="send-action-btn"
+            title="Send Message"
+          >
+            &rarr;
+          </button>
+        </div>
       </form>
-      <div style={{ marginTop: '6px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-        Ask custom questions • Press <kbd>Enter ↵</kbd> to send • <kbd>Shift + Enter</kbd> for newline
+
+      <div style={{ fontSize: '0.7rem', color: 'var(--muted)', textAlign: 'center', marginTop: '8px' }}>
+        AI responses can make mistakes. Verify important information.
       </div>
     </div>
   );

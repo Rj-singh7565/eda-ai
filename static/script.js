@@ -41,14 +41,6 @@ document.addEventListener("DOMContentLoaded", () => {
     const questionInput = document.getElementById("question-input");
     const sendBtn = document.getElementById("send-btn");
 
-    // Citation Side Drawer
-    const citationDrawer = document.getElementById("citation-drawer");
-    const drawerBackdrop = document.getElementById("drawer-backdrop");
-    const drawerPages = document.getElementById("drawer-pages");
-    const drawerScore = document.getElementById("drawer-score");
-    const drawerContent = document.getElementById("drawer-content");
-    const closeDrawerBtn = document.getElementById("close-drawer");
-
     // Toast Container
     const toastContainer = document.getElementById("toast-container");
 
@@ -651,11 +643,6 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
             }
 
-            // Render Sources Section if available
-            if (sources.length > 0) {
-                renderSourcesSection(assistantBubble, sources);
-            }
-
         } catch (err) {
             assistantBubble.innerHTML = `<span style="color: var(--status-failed-text);">Error: ${escapeHtml(err.message)}</span>`;
             showToast(err.message, "error");
@@ -692,57 +679,6 @@ document.addEventListener("DOMContentLoaded", () => {
         return bubble;
     }
 
-    function renderSourcesSection(assistantBubble, sources) {
-        const container = document.createElement("div");
-        container.className = "sources-container";
-
-        const toggle = document.createElement("div");
-        toggle.className = "sources-toggle";
-        toggle.innerHTML = `📚 Verified Sources (${sources.length} excerpts)`;
-
-        const chipsList = document.createElement("div");
-        chipsList.className = "sources-chips-list";
-
-        sources.forEach((src, idx) => {
-            const pagesLabel = src.pages.map(p => `p. ${p}`).join(", ");
-            const chip = document.createElement("button");
-            chip.className = "citation-chip";
-            chip.innerHTML = `Excerpts #${idx + 1} (${pagesLabel})`;
-            
-            chip.addEventListener("click", () => {
-                openCitationDrawer(src);
-            });
-
-            chipsList.appendChild(chip);
-        });
-
-        container.appendChild(toggle);
-        container.appendChild(chipsList);
-        assistantBubble.appendChild(container);
-    }
-
-    // ── 6. Citation Side Drawer ──────────────────────────────────────────
-    function openCitationDrawer(source) {
-        drawerPages.textContent = `Page ${source.pages.join(", ")}`;
-        drawerScore.textContent = `Similarity Score: ${source.score}`;
-        drawerContent.textContent = source.text;
-        
-        citationDrawer.hidden = false;
-        drawerBackdrop.hidden = false;
-        setTimeout(() => citationDrawer.classList.add("open"), 10);
-    }
-
-    function closeCitationDrawer() {
-        citationDrawer.classList.remove("open");
-        setTimeout(() => {
-            citationDrawer.hidden = true;
-            drawerBackdrop.hidden = true;
-        }, 300);
-    }
-
-    closeDrawerBtn.addEventListener("click", closeCitationDrawer);
-    drawerBackdrop.addEventListener("click", closeCitationDrawer);
-
     // ── Helper Utilities ─────────────────────────────────────────────────
     function scrollToBottom() {
         chatContainer.scrollTop = chatContainer.scrollHeight;
@@ -753,10 +689,47 @@ document.addEventListener("DOMContentLoaded", () => {
         return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     }
 
+    function renderMarkdownTable(tableBlock) {
+        const lines = tableBlock.trim().split("\n").filter(l => l.trim().startsWith("|"));
+        if (lines.length < 2) return tableBlock;
+
+        const headers = lines[0].split("|").slice(1, -1).map(h => h.trim());
+        const dataRows = lines.slice(2).map(row => row.split("|").slice(1, -1).map(c => c.trim()));
+
+        let html = '<div class="table-responsive-wrapper"><table><thead><tr>';
+        headers.forEach(h => {
+            html += `<th>${escapeHtml(h)}</th>`;
+        });
+        html += '</tr></thead><tbody>';
+        dataRows.forEach(row => {
+            html += '<tr>';
+            row.forEach(cell => {
+                html += `<td>${escapeHtml(cell)}</td>`;
+            });
+            html += '</tr>';
+        });
+        html += '</tbody></table></div>';
+        return html;
+    }
+
     function formatMarkdownText(text) {
         if (!text) return "";
-        const lines = text.split("\n");
+
+        // 1. Sanitize unnecessary metadata bracket labels (e.g. [Sheet 'Data' (Rows 1-39) Table])
+        let cleanText = text.replace(/\[(Sheet|Page|Slide|Section|Row|Rows)[^\]]*Table\]/gi, "").trim();
+        cleanText = cleanText.replace(/\[(Sheet|Section)[^\]]*\]\n?/gi, "").trim();
+
+        // 2. Extract and render Markdown tables
+        const tablePattern = /(\|[^\n]+\|\n\|[-:\s|]+\|\n(?:\|[^\n]+\|\n?)+)/g;
+        cleanText = cleanText.replace(tablePattern, (match) => {
+            return "\n\n" + renderMarkdownTable(match) + "\n\n";
+        });
+
+        const lines = cleanText.split("\n");
         const htmlLines = lines.map(line => {
+            if (line.includes('<div class="table-responsive-wrapper">')) {
+                return line; // Preserve raw HTML table block
+            }
             const escaped = escapeHtml(line);
             // Headings
             if (/^###\s+(.*)/.test(escaped)) {
@@ -770,7 +743,7 @@ document.addEventListener("DOMContentLoaded", () => {
             }
             // Bullet points (* or -)
             if (/^\s*[\*\-]\s+(.*)/.test(escaped)) {
-                return escaped.replace(/^\s*[\*\-]\s+(.*)/, "<div style='margin-left: 14px; margin-bottom: 3px; display: flex; align-items: baseline;'><span style='margin-right: 8px; color: var(--brand-primary); font-weight: bold;'>•</span><span>$1</span></div>");
+                return escaped.replace(/^\s*[\*\-]\s+(.*)/, "<div style='margin-left: 14px; margin-bottom: 3px; display: flex; align-items: baseline;'><span style='margin-right: 8px; color: var(--accent-primary); font-weight: bold;'>•</span><span>$1</span></div>");
             }
             return escaped;
         });
@@ -781,7 +754,7 @@ document.addEventListener("DOMContentLoaded", () => {
         formatted = formatted.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
 
         // Inline code `code`
-        formatted = formatted.replace(/`(.*?)`/g, "<code style='background: var(--bg-tertiary); padding: 2px 6px; border-radius: 4px; font-family: var(--font-mono); font-size: 0.85em;'>$1</code>");
+        formatted = formatted.replace(/`(.*?)`/g, "<code style='background: var(--bg-hover); padding: 2px 6px; border-radius: 4px; font-family: var(--font-mono); font-size: 0.85em;'>$1</code>");
 
         // Citation reference tags [Page X], [Slide X], [Sheet X], [Row X], [Section X], [Image X]
         formatted = formatted.replace(/\[(Page|Slide|Sheet|Row|Section|Image|p\.)[^\]]*\]/gi, "<span class='citation-chip' style='padding: 2px 6px; font-size: 0.72rem; display: inline-block; vertical-align: middle; margin: 0 2px;'>$&</span>");

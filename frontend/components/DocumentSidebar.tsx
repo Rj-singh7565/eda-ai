@@ -11,82 +11,128 @@ interface DocumentSidebarProps {
   onDeleteDoc: (docId: string) => void;
   onUpload: (file: File) => void;
   isUploading: boolean;
+  searchFilter: string;
+  onSearchFilterChange: (q: string) => void;
 }
 
-export default function DocumentSidebar({
-  documents,
-  activeDocId,
-  onSelectDoc,
-  onDeleteDoc,
-  onUpload,
-  isUploading
-}: DocumentSidebarProps) {
+export default function DocumentSidebar(props: DocumentSidebarProps) {
+  const getFormatBadge = (filename: string) => {
+    const ext = filename.split('.').pop()?.toUpperCase() || 'DOC';
+    switch (ext) {
+      case 'PDF':
+        return <span className="format-icon format-pdf">PDF</span>;
+      case 'DOCX':
+      case 'DOC':
+        return <span className="format-icon format-docx">DOC</span>;
+      case 'XLSX':
+      case 'CSV':
+      case 'XLS':
+        return <span className="format-icon format-xlsx">XLS</span>;
+      case 'PPTX':
+      case 'PPT':
+        return <span className="format-icon format-pptx">PPT</span>;
+      case 'ZIP':
+        return <span className="format-icon format-zip">ZIP</span>;
+      default:
+        return <span className="format-icon format-docx">TXT</span>;
+    }
+  };
+
+  const filteredDocs = props.documents.filter((doc) =>
+    doc.filename.toLowerCase().includes(props.searchFilter.toLowerCase())
+  );
+
   return (
-    <aside className="sidebar">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+    <aside className="col-library">
+      {/* Header */}
+      <div className="lib-header">
         <div>
-          <h2 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)' }}>EDA Assistant</h2>
-          <span style={{ fontSize: '0.72rem', color: 'var(--accent-primary)', background: 'var(--accent-glow)', padding: '2px 6px', borderRadius: '4px' }}>
-            v2.0 MVP
-          </span>
+          <div style={{ fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--muted)', letterSpacing: '0.06em' }}>
+            Documents
+          </div>
+          <div>Library</div>
         </div>
+        <button className="lib-add-btn" title="Add Document">+</button>
       </div>
 
-      <UploadZone onUpload={onUpload} isUploading={isUploading} />
+      {/* Upload Zone Card */}
+      <UploadZone onUpload={props.onUpload} isUploading={props.isUploading} />
 
-      <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-          <span>Documents</span>
-          <span>{documents.length}</span>
-        </div>
+      {/* Recently Added List */}
+      <div className="recent-header">
+        <span>Recently added</span>
+        <span style={{ cursor: 'pointer' }}>≡</span>
+      </div>
 
-        <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-          {documents.map((doc) => {
-            const isActive = doc.doc_id === activeDocId;
+      {/* Document Items List */}
+      <div className="doc-list-group">
+        {filteredDocs.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '20px 0', fontSize: '0.8rem', color: 'var(--muted)' }}>
+            No matching documents
+          </div>
+        ) : (
+          filteredDocs.map((doc) => {
+            const isActive = doc.doc_id === props.activeDocId;
+            const sizeMb = doc.file_size
+              ? (doc.file_size / (1024 * 1024)).toFixed(1)
+              : '1.2';
+
             return (
-              <li
+              <div
                 key={doc.doc_id}
-                onClick={() => onSelectDoc(doc.doc_id)}
-                style={{
-                  padding: '10px 12px',
-                  borderRadius: '8px',
-                  backgroundColor: isActive ? 'var(--bg-card-hover)' : 'var(--bg-card)',
-                  border: isActive ? '1px solid var(--border-focus)' : '1px solid var(--border-color)',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center'
-                }}
+                onClick={() => props.onSelectDoc(doc.doc_id)}
+                className={`doc-item-row ${isActive ? 'active' : ''}`}
               >
-                <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                  <div style={{ fontSize: '0.85rem', fontWeight: 500, color: 'var(--text-primary)' }}>
+                {getFormatBadge(doc.filename)}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {doc.filename}
                   </div>
-                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                    {doc.status === 'ready' ? '● Ready' : `● ${doc.status}`}
+                  <div style={{ fontSize: '0.72rem', color: 'var(--muted)', marginTop: '2px' }}>
+                    Today • {sizeMb} MB
                   </div>
                 </div>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    onDeleteDoc(doc.doc_id);
+                    props.onDeleteDoc(doc.doc_id);
                   }}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    color: 'var(--text-muted)',
-                    cursor: 'pointer',
-                    fontSize: '1rem',
-                    padding: '2px 6px'
-                  }}
-                  title="Delete Document"
+                  style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: '0.9rem' }}
                 >
                   &times;
                 </button>
-              </li>
+              </div>
             );
-          })}
-        </ul>
+          })
+        )}
+      </div>
+
+      {/* Footer Actions & Storage Usage */}
+      <div style={{ borderTop: '1px solid var(--border)', paddingTop: '12px', marginTop: 'auto' }}>
+        <button
+          style={{
+            width: '100%',
+            background: 'transparent',
+            border: '1px solid var(--border)',
+            padding: '8px',
+            borderRadius: 'var(--radius-xs)',
+            fontSize: '0.78rem',
+            fontWeight: 600,
+            color: 'var(--ink)',
+            cursor: 'pointer',
+            marginBottom: '12px'
+          }}
+        >
+          View all documents &rarr;
+        </button>
+
+        <div style={{ fontSize: '0.72rem', color: 'var(--muted)', display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+          <span>Storage Usage</span>
+          <span>2.45 GB / 10 GB</span>
+        </div>
+        <div style={{ height: '4px', background: 'var(--border)', borderRadius: '2px', overflow: 'hidden' }}>
+          <div style={{ width: '24.5%', height: '100%', background: 'var(--slate)' }} />
+        </div>
       </div>
     </aside>
   );

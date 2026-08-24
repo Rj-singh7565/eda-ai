@@ -1,49 +1,92 @@
 'use client';
 
 import React from 'react';
-import { Document } from '../lib/types';
+import { Document, WorkspaceViewMode } from '../lib/types';
 import ProcessingStatus from './ProcessingStatus';
 
 interface DocumentHeaderProps {
   activeDoc: Document | null;
   onOpenMarkdown: () => void;
+  viewMode: WorkspaceViewMode;
+  onViewModeChange: (mode: WorkspaceViewMode) => void;
 }
 
-export default function DocumentHeader({ activeDoc, onOpenMarkdown }: DocumentHeaderProps) {
+export default function DocumentHeader({
+  activeDoc,
+  onOpenMarkdown,
+  viewMode,
+  onViewModeChange
+}: DocumentHeaderProps) {
   if (!activeDoc) {
     return (
       <header className="workspace-header">
         <div className="active-doc-info">
           <h1>Select a Document</h1>
           <div className="active-doc-meta">
-            <span className="status-badge status-idle">No Document Selected</span>
+            <span className="meta-pill" style={{ color: 'var(--text-muted)' }}>
+              No Active Workspace Selection
+            </span>
           </div>
         </div>
       </header>
     );
   }
 
+  const formattedSize = activeDoc.file_size
+    ? `${(activeDoc.file_size / 1024).toFixed(1)} KB`
+    : 'Unknown size';
+
   return (
     <header className="workspace-header">
       <div className="active-doc-info">
         <h1>{activeDoc.filename}</h1>
         <div className="active-doc-meta">
-          <span style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-            {activeDoc.page_count || 0} pages / sections
+          <span className="meta-pill">
+            📄 {activeDoc.page_count || 0} Pages
           </span>
-          <span style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-            {activeDoc.chunk_count || 0} chunks
+          <span className="meta-pill">
+            🧩 {activeDoc.chunk_count || 0} Vectors
+          </span>
+          <span className="meta-pill">
+            💾 {formattedSize}
           </span>
           <ProcessingStatus status={activeDoc.status} errorMessage={activeDoc.error_message} />
         </div>
       </div>
-      <div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+        {/* View Mode Tabs */}
+        <div className="view-mode-tabs">
+          <button
+            className={`view-mode-btn ${viewMode === 'chat' ? 'active' : ''}`}
+            onClick={() => onViewModeChange('chat')}
+            title="AI Analytical Chat Workspace"
+          >
+            <span>💬</span> AI Q&A
+          </button>
+          <button
+            className={`view-mode-btn ${viewMode === 'reader' ? 'active' : ''}`}
+            onClick={() => onViewModeChange('reader')}
+            title="Inline Document Reader"
+          >
+            <span>📖</span> Reader View
+          </button>
+          <button
+            className={`view-mode-btn ${viewMode === 'split' ? 'active' : ''}`}
+            onClick={() => onViewModeChange('split')}
+            title="Side-by-side Split View"
+          >
+            <span>📑</span> Split View
+          </button>
+        </div>
+
+        {/* View Markdown Action Button */}
         <button
           onClick={onOpenMarkdown}
           className="btn-primary"
-          style={{ fontSize: '0.85rem', padding: '6px 14px', borderRadius: '8px' }}
+          style={{ fontSize: '0.8rem', padding: '6px 12px' }}
         >
-          📄 View Markdown
+          <span>👁️</span> Markdown Modal
         </button>
       </div>
     </header>

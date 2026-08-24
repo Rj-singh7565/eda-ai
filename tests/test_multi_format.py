@@ -98,7 +98,7 @@ def test_extract_csv_excel():
         assert len(data) == 1
         assert len(data[0]["tables"]) == 1
         assert "Engineering" in data[0]["tables"][0]
-        assert "Sheet 'Data'" in data[0]["page_label"]
+        assert "Rows" in data[0]["page_label"]
     finally:
         os.remove(csv_path)
 

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 
 interface UploadZoneProps {
   onUpload: (file: File) => void;
@@ -9,6 +9,7 @@ interface UploadZoneProps {
 
 export default function UploadZone({ onUpload, isUploading }: UploadZoneProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -16,8 +17,18 @@ export default function UploadZone({ onUpload, isUploading }: UploadZoneProps) {
     }
   };
 
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(true);
+  };
+
+  const handleDragLeave = () => {
+    setIsDragOver(false);
+  };
+
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
+    setIsDragOver(false);
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       onUpload(e.dataTransfer.files[0]);
     }
@@ -25,17 +36,20 @@ export default function UploadZone({ onUpload, isUploading }: UploadZoneProps) {
 
   return (
     <div
-      onDragOver={(e) => e.preventDefault()}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
       onDrop={handleDrop}
       onClick={() => fileInputRef.current?.click()}
       style={{
-        border: '2px dashed var(--border-color)',
-        borderRadius: '12px',
-        padding: '16px',
+        border: isDragOver ? '2px dashed var(--accent-primary)' : '1px dashed var(--border-hover)',
+        borderRadius: 'var(--radius-md)',
+        padding: '20px 16px',
         textAlign: 'center',
         cursor: 'pointer',
-        backgroundColor: 'var(--bg-app)',
-        transition: 'border-color 0.2s ease'
+        backgroundColor: isDragOver ? 'var(--accent-subtle)' : 'rgba(15, 23, 42, 0.4)',
+        backdropFilter: 'blur(8px)',
+        transition: 'all var(--transition-fast)',
+        boxShadow: isDragOver ? 'var(--shadow-glow)' : 'none'
       }}
     >
       <input
@@ -45,12 +59,14 @@ export default function UploadZone({ onUpload, isUploading }: UploadZoneProps) {
         hidden
         accept=".pdf,.docx,.pptx,.xlsx,.csv,.txt,.md,.png,.jpg,.jpeg,.zip"
       />
-      <div style={{ fontSize: '1.2rem', marginBottom: '4px' }}>📁</div>
-      <p style={{ fontSize: '0.85rem', fontWeight: 500 }}>
-        {isUploading ? 'Uploading & validating...' : 'Drag & drop files here, or browse'}
+      <div style={{ fontSize: '1.6rem', marginBottom: '6px', animation: isUploading ? 'pulseDot 1.2s infinite' : 'none' }}>
+        {isUploading ? '⚙️' : '📥'}
+      </div>
+      <p style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+        {isUploading ? 'Parsing & Indexing File...' : 'Drop document or ZIP here'}
       </p>
-      <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-        PDF, DOCX, PPTX, Excel, CSV, TXT, Images, ZIP (Max 25MB)
+      <p style={{ fontSize: '0.73rem', color: 'var(--text-muted)', marginTop: '4px', lineHeight: '1.4' }}>
+        Supports PDF, DOCX, PPTX, Excel, CSV, OCR Images & ZIP archives
       </p>
     </div>
   );
