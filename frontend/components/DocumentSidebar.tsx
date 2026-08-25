@@ -126,13 +126,27 @@ export default function DocumentSidebar(props: DocumentSidebarProps) {
           View all documents &rarr;
         </button>
 
-        <div style={{ fontSize: '0.72rem', color: 'var(--muted)', display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-          <span>Storage Usage</span>
-          <span>2.45 GB / 10 GB</span>
-        </div>
-        <div style={{ height: '4px', background: 'var(--border)', borderRadius: '2px', overflow: 'hidden' }}>
-          <div style={{ width: '24.5%', height: '100%', background: 'var(--slate)' }} />
-        </div>
+        {/* Dynamic Storage Usage calculation */}
+        {(() => {
+          const totalBytes = props.documents.reduce((sum, d) => sum + (d.file_size || 0), 0);
+          const maxBytes = 10 * 1024 * 1024 * 1024; // 10 GB limit
+          const pct = Math.min(100, Math.max(0, (totalBytes / maxBytes) * 100));
+          const displayUsed = totalBytes >= 1024 * 1024 * 1024
+            ? `${(totalBytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
+            : `${(totalBytes / (1024 * 1024)).toFixed(1)} MB`;
+
+          return (
+            <>
+              <div style={{ fontSize: '0.72rem', color: 'var(--muted)', display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                <span>Storage Usage</span>
+                <span>{displayUsed} / 10 GB</span>
+              </div>
+              <div style={{ height: '4px', background: 'rgba(0, 0, 0, 0.08)', borderRadius: '2px', overflow: 'hidden' }}>
+                <div style={{ width: `${pct}%`, height: '100%', background: '#6366f1', transition: 'width 0.3s ease' }} />
+              </div>
+            </>
+          );
+        })()}
       </div>
     </aside>
   );
