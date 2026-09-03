@@ -12,12 +12,13 @@ export default function ChatMessage({ message, onCitationClick }: ChatMessagePro
   const isUser = message.sender === 'user';
   const isStreaming = message.streaming && !message.text;
 
-  // Sanitize internal metadata labels like [Sheet 'Data' (Rows 1-39) Table]
+  // Sanitize internal metadata labels and <think>...</think> reasoning blocks
   const cleanRawText = (text: string) => {
     if (!text) return '';
-    let cleaned = text.replace(/\[(Sheet|Page|Slide|Section|Row|Rows)[^\]]*Table\]/gi, '').trim();
-    cleaned = cleaned.replace(/\[(Sheet|Section)[^\]]*\]\n?/gi, '').trim();
-    return cleaned;
+    let cleaned = text.replace(/<think>[\s\S]*?(?:<\/think>|$)/gi, '');
+    cleaned = cleaned.replace(/\[(Sheet|Page|Slide|Section|Row|Rows)[^\]]*Table\]/gi, '');
+    cleaned = cleaned.replace(/\[(Sheet|Section)[^\]]*\]\n?/gi, '');
+    return cleaned.trim();
   };
 
   const textToRender = cleanRawText(message.text);
@@ -63,6 +64,42 @@ export default function ChatMessage({ message, onCitationClick }: ChatMessagePro
             </div>
           );
         }
+      }
+
+      if (!part.trim()) return null;
+
+      // Fallback for non-table text lines from assistant: convert lines/key-values into a 2-column tabular view
+      if (!isUser) {
+        const rawLines = part.trim().split('\n').filter((l) => l.trim());
+        const tableRows = rawLines.map((line) => {
+          const lineClean = line.replace(/^[-*•\d+.\s]+/, '').trim();
+          if (lineClean.includes(':')) {
+            const [k, v] = lineClean.split(':', 2);
+            return { key: k.trim(), val: v.trim() };
+          }
+          return { key: 'Finding / Details', val: lineClean };
+        });
+
+        return (
+          <div key={pIdx} className="table-responsive-wrapper" style={{ overflowX: 'auto', margin: '12px 0', borderRadius: '8px', border: '1px solid var(--border)' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.86rem', textAlign: 'left' }}>
+              <thead>
+                <tr style={{ background: 'var(--paper-soft, rgba(255, 255, 255, 0.05))', borderBottom: '2px solid var(--border)' }}>
+                  <th style={{ padding: '8px 12px', fontWeight: 600, color: 'var(--slate)' }}>Attribute / Field</th>
+                  <th style={{ padding: '8px 12px', fontWeight: 600, color: 'var(--slate)' }}>Details / Value</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tableRows.map((row, rIdx) => (
+                  <tr key={rIdx} style={{ borderBottom: rIdx === tableRows.length - 1 ? 'none' : '1px solid var(--border)' }}>
+                    <td style={{ padding: '8px 12px', fontWeight: 600, width: '30%' }}>{row.key}</td>
+                    <td style={{ padding: '8px 12px' }}>{row.val}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
       }
 
       return (

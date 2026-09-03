@@ -18,16 +18,20 @@ from backend.app.routes import health, upload, documents, chat
 from backend.app.services import embeddings, retrieval
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Pre-warm embedding model and vector store handles on startup to eliminate query latency."""
-    print("[STARTUP] Pre-warming SentenceTransformer embedding model and Pinecone index...")
+def _background_warmup():
     try:
-        await asyncio.to_thread(embeddings.warmup_embeddings)
-        await asyncio.to_thread(retrieval.get_pinecone_index)
+        embeddings.warmup_embeddings()
+        retrieval.get_pinecone_index()
         print("[STARTUP] Engine pre-warming complete. Vector retrieval ready.")
     except Exception as e:
         print(f"[STARTUP WARN] Startup pre-warm note: {e}")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Pre-warm embedding model and vector store handles in background task for instant server startup."""
+    print("[STARTUP] FastAPI backend ready on http://localhost:8000")
+    asyncio.create_task(asyncio.to_thread(_background_warmup))
     yield
 
 

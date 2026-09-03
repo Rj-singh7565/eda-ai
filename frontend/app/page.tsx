@@ -34,6 +34,15 @@ export default function DashboardPage() {
 
   const activeDoc = documents.find((d) => d.doc_id === activeDocId) || null;
 
+  const [toast, setToast] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
+
+  const showToast = (type: 'success' | 'error' | 'info', message: string) => {
+    setToast({ type, message });
+    setTimeout(() => {
+      setToast((current) => (current?.message === message ? null : current));
+    }, 5000);
+  };
+
   useEffect(() => {
     loadDocs();
   }, []);
@@ -105,9 +114,12 @@ export default function DashboardPage() {
           setActiveDocId(null);
         }
       }
-    } catch (err) {
-      setDocuments([]);
-      setActiveDocId(null);
+    } catch (err: any) {
+      console.error('Failed to load documents:', err);
+      showToast(
+        'error',
+        'Unable to connect to backend server (http://localhost:8000). Please start the backend service.'
+      );
     }
   };
 
@@ -115,21 +127,44 @@ export default function DashboardPage() {
     setIsUploading(true);
     try {
       const res = await uploadDocumentFile(file);
+      
+      // Optimistically add document records returned by the upload endpoint
+      const newDocs: Document[] = [];
+      if (res.documents && Array.isArray(res.documents) && res.documents.length > 0) {
+        newDocs.push(...res.documents);
+      } else if (res.doc_id) {
+        newDocs.push({
+          doc_id: res.doc_id,
+          filename: res.filename || file.name,
+          file_size: file.size,
+          file_type: res.file_type || 'pdf',
+          status: 'processing'
+        });
+      }
+
+      if (newDocs.length > 0) {
+        setDocuments((prev) => {
+          const existingIds = new Set(prev.map((d) => d.doc_id));
+          const additions = newDocs.filter((d) => !existingIds.has(d.doc_id));
+          return [...additions, ...prev];
+        });
+        setActiveDocId(newDocs[0].doc_id);
+      }
+
+      showToast('success', res.message || `Uploaded ${file.name} successfully. Ingestion initiated.`);
+
+      // Re-fetch full documents from backend
       const updatedDocs = await fetchDocuments();
-      setDocuments(updatedDocs);
-      if (res.documents && res.documents.length > 0) {
-        setActiveDocId(res.documents[0].doc_id);
+      if (Array.isArray(updatedDocs)) {
+        setDocuments(updatedDocs);
       }
     } catch (err: any) {
-      const newDoc: Document = {
-        doc_id: `upload-${Date.now()}`,
-        filename: file.name,
-        file_size: file.size,
-        file_type: file.name.split('.').pop()?.toUpperCase() || 'FILE',
-        status: 'ready'
-      };
-      setDocuments((prev) => [newDoc, ...prev]);
-      setActiveDocId(newDoc.doc_id);
+      console.error('Upload failed:', err);
+      const isFetchErr = err.message && err.message.includes('Failed to fetch');
+      const errDisplay = isFetchErr
+        ? 'Could not connect to FastAPI backend server (http://localhost:8000). Please verify backend service is running.'
+        : err.message || 'File upload failed.';
+      showToast('error', errDisplay);
     } finally {
       setIsUploading(false);
     }
@@ -159,7 +194,7 @@ export default function DashboardPage() {
   };
 
   const handleSendQuestion = async (questionText: string) => {
-    if (!activeDocId) return;
+    if (!activeDocId || !activeDoc || activeDoc.status !== 'ready') return;
 
     const userMsg: ChatMessage = {
       id: `user-${Date.now()}`,
@@ -186,8 +221,21 @@ export default function DashboardPage() {
         body: JSON.stringify({ doc_id: activeDocId, question: questionText }),
       });
 
-      if (!response.ok || !response.body) {
-        throw new Error('Streaming connection failed');
+      if (!response.ok) {
+        let errorDetail = 'Streaming connection failed.';
+        try {
+          const errData = await response.json();
+          if (errData && (errData.detail || errData.message)) {
+            errorDetail = errData.detail || errData.message;
+          }
+        } catch (_) {
+          // Fallback if non-JSON response
+        }
+        throw new Error(errorDetail);
+      }
+
+      if (!response.body) {
+        throw new Error('Streaming response body is missing.');
       }
 
       const reader = response.body.getReader();
@@ -261,10 +309,17 @@ export default function DashboardPage() {
         }
       }
     } catch (err: any) {
+      const isFetchErr = err.message && err.message.includes('Failed to fetch');
+      const errDisplay = isFetchErr
+        ? 'Could not connect to FastAPI backend server (http://localhost:8000). Please verify backend service is running.'
+        : (err.message && err.message.startsWith('Error:'))
+        ? err.message
+        : `Error: ${err.message || 'Failed to connect to assistant backend.'}`;
+
       setMessages((prev) =>
         prev.map((msg) =>
           msg.id === assistantMsg.id
-            ? { ...msg, text: `Error: ${err.message || 'Failed to connect to assistant backend.'}`, streaming: false }
+            ? { ...msg, text: errDisplay, streaming: false }
             : msg
         )
       );
@@ -281,7 +336,63 @@ export default function DashboardPage() {
   };
 
   return (
-    <div className="app-viewport">
+    <div className="app-viewport" style={{ position: 'relative' }}>
+      {toast && (
+        <div
+          style={{
+            position: 'fixed',
+            top: '16px',
+            right: '20px',
+            zIndex: 9999,
+            padding: '12px 18px',
+            borderRadius: 'var(--radius-sm)',
+            fontSize: '0.84rem',
+            fontWeight: 600,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            boxShadow: '0 8px 24px rgba(0, 0, 0, 0.15)',
+            backgroundColor:
+              toast.type === 'error'
+                ? '#FEE2E2'
+                : toast.type === 'success'
+                ? '#D1FAE5'
+                : '#E0E7FF',
+            color:
+              toast.type === 'error'
+                ? '#991B1B'
+                : toast.type === 'success'
+                ? '#065F46'
+                : '#3730A3',
+            border: `1px solid ${
+              toast.type === 'error'
+                ? '#FCA5A5'
+                : toast.type === 'success'
+                ? '#6EE7B7'
+                : '#A5B4FC'
+            }`,
+            transition: 'all 0.3s ease'
+          }}
+        >
+          <span>{toast.type === 'error' ? '⚠️' : toast.type === 'success' ? '✅' : 'ℹ️'}</span>
+          <span>{toast.message}</span>
+          <button
+            onClick={() => setToast(null)}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+              fontWeight: 700,
+              fontSize: '0.9rem',
+              color: 'inherit',
+              marginLeft: '8px'
+            }}
+          >
+            &times;
+          </button>
+        </div>
+      )}
+
       <NavSidebar
         activeTab={activeNavTab}
         onTabChange={setActiveNavTab}
@@ -341,6 +452,8 @@ export default function DashboardPage() {
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%' }}>
               <ChatInput
                 disabled={!activeDoc}
+                isDocReady={activeDoc?.status === 'ready'}
+                docStatus={activeDoc?.status}
                 onSend={handleSendQuestion}
               />
               <ChatWindow

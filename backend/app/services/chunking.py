@@ -117,7 +117,7 @@ def chunk_markdown(
                     else:
                         current_text = sentence
 
-        if current_text.strip():
+        if current_text.strip() and len(current_text.strip()) >= 30:
             chunks.append({
                 "chunk_id": f"{doc_id}_{chunk_idx}",
                 "text": f"[{section_label}]\n" + current_text.strip(),
@@ -128,7 +128,16 @@ def chunk_markdown(
             })
             chunk_idx += 1
 
-    return chunks
+    # Deduplicate identical consecutive chunks while preserving ordering
+    deduped_chunks = []
+    seen_texts = set()
+    for c in chunks:
+        norm_text = re.sub(r"\s+", " ", c["text"].strip())
+        if norm_text not in seen_texts or c.get("is_table", False):
+            seen_texts.add(norm_text)
+            deduped_chunks.append(c)
+
+    return deduped_chunks
 
 
 def chunk_text_sentence_aware(

@@ -9,6 +9,7 @@ load_dotenv()
 
 # ── API Keys & Validation ─────────────────────────────────────────────
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "eda-assistant")
 
@@ -37,7 +38,7 @@ def validate_config():
 # ── Models ────────────────────────────────────────────────────────────
 EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
 EMBEDDING_DIMENSION = 384
-LLM_MODEL = os.getenv("LLM_MODEL", "groq/compound-mini")
+LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-oss-120b")
 
 # ── Chunking & Retrieval Parameters ──────────────────────────────────
 CHUNK_SIZE = 600       # Target characters per chunk

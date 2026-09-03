@@ -32,9 +32,12 @@ async def ask_question_stream(request: Request, payload: QuestionStreamRequest):
         raise HTTPException(status_code=404, detail="Document not found.")
 
     if doc["status"] != "ready":
+        status_msg = doc['status']
+        if doc.get("error_message"):
+            status_msg += f" ({doc['error_message']})"
         raise HTTPException(
             status_code=400,
-            detail=f"Document is not ready yet. Current status: {doc['status']}"
+            detail=f"Document '{doc.get('filename', doc_id)}' is not ready yet. Status: {status_msg}. Please wait for document ingestion to complete."
         )
 
     return StreamingResponse(

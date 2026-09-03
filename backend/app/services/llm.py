@@ -25,19 +25,58 @@ def get_groq_client() -> Groq:
 
 import re
 
+def ensure_markdown_table(text: str) -> str:
+    """
+    Generalized response table wrapper — guarantees that any response text produced for ANY document
+    format (structured CSV/Excel, unstructured PDF/DOCX, PPTX, OCR images, TXT, JSON) is formatted strictly as a valid Markdown Table.
+    """
+    if not text or not text.strip():
+        return "| Status | Details |\n| --- | --- |\n| Information Not Found | No data available to format. |"
+
+    clean_text = re.sub(r'<think>[\s\S]*?(?:<\/think>|$)', '', text, flags=re.IGNORECASE).strip()
+
+    # Check if text contains a valid Markdown Table (| Header 1 | Header 2 |)
+    lines_with_pipe = [l.strip() for l in clean_text.split("\n") if l.strip().startswith("|")]
+    if len(lines_with_pipe) >= 2:
+        return clean_text
+
+    # Fallback: Convert key-value pairs or text bullet points into a structured Markdown Table
+    raw_lines = [l.strip() for l in clean_text.split("\n") if l.strip()]
+    table_rows = []
+
+    for line in raw_lines:
+        line_clean = re.sub(r"^[-*•\d+.\s]+", "", line).strip()
+        if not line_clean:
+            continue
+        if ":" in line_clean:
+            parts = line_clean.split(":", 1)
+            table_rows.append(f"| {parts[0].strip()} | {parts[1].strip()} |")
+        elif " - " in line_clean:
+            parts = line_clean.split(" - ", 1)
+            table_rows.append(f"| {parts[0].strip()} | {parts[1].strip()} |")
+        else:
+            table_rows.append(f"| Insight / Finding | {line_clean} |")
+
+    if not table_rows:
+        return f"| Parameter | Value |\n| --- | --- |\n| Result | {clean_text.replace('|', '/')} |"
+
+    return "| Attribute / Field | Details / Value |\n| --- | --- |\n" + "\n".join(table_rows)
+
+
 def build_prompt_messages(question: str, chunks: List[Dict[str, Any]], chat_history: List[Dict[str, str]]) -> List[Dict[str, str]]:
     """
-    Construct chat messages prompt incorporating context excerpts, session history, and clean table output rules.
+    Construct chat messages prompt incorporating context excerpts, session history, and generalized clean table output rules.
     """
     system_prompt = (
-        "You are an expert AI Data Analyst specializing in document intelligence and exploratory data analysis.\n"
-        "Your task is to provide accurate, concise, data-driven answers strictly in clean Markdown Table format based on the provided context excerpts.\n\n"
-        "STRICT OUTPUT FORMAT & CLEANLINESS RULES:\n"
-        "1. EXCLUSIVE TABLE FORMAT: Provide ONLY the direct, sufficient answer formatted strictly as a Markdown Table (| Header 1 | Header 2 |).\n"
-        "2. NO PREAMBLE OR CONVERSATIONAL FILLER: Do NOT include any introductory sentences, conversational filler ('Here is the table:', 'Based on the document...'), concluding notes, or extra commentary.\n"
-        "3. NO INTERNAL LABELS: Do NOT print internal metadata labels, sheet markers, or raw chunk tags like '[Sheet 'Data' (Rows 1-39) Table]', '[Page 1 Table]', or '[Section General]'. Output ONLY the clean table.\n"
-        "4. SUFFICIENT DATA ONLY: Output only the exact rows and columns needed to directly answer the user's question.\n"
-        "5. INSUFFICIENT DATA: If the context does not contain sufficient data to answer the query, return a single-row Markdown Table with the message:\n"
+        "You are an expert AI Data Analyst & Document Intelligence Engine for all file types (CSV, Excel, PDF, Word, PPTX, Text, OCR Images, JSON, etc.).\n"
+        "Your sole task is to analyze document context excerpts and return answers STRICTLY in Markdown Table format (| Header 1 | Header 2 | ... |).\n\n"
+        "UNIVERSAL TABLE OUTPUT GUARANTEE FOR ALL DATA TYPES:\n"
+        "1. EXCLUSIVE TABLE FORMAT: Return your response strictly as a Markdown Table. Never output raw paragraphs or prose.\n"
+        "2. DYNAMIC & SUFFICIENT HEADERS: Choose logical column headers suited to the question and document type (e.g., '| Feature | Details |', '| Metric | Value | Unit |', '| Entity | Description | Source |', or full dataset columns).\n"
+        "3. NO PREAMBLE OR CONVERSATIONAL FILLER: Do NOT include any introductory lines, conversational filler ('Here is the table:'), concluding remarks, or commentary.\n"
+        "4. NO INTERNAL METADATA TAGS: Do NOT print internal labels like '[Sheet Data Table]', '[Page 1]', or '[Section General]'. Output ONLY the Markdown Table.\n"
+        "5. NO THINKING BLOCKS: Do NOT output <think> tags or chain-of-thought reasoning.\n"
+        "6. INSUFFICIENT DATA: If the context does not contain sufficient data, return a single-row Markdown Table:\n"
         "| Status | Details |\n| --- | --- |\n| Information Not Found | I could not find sufficient information in the document to answer this question. |"
     )
 
@@ -45,7 +84,7 @@ def build_prompt_messages(question: str, chunks: List[Dict[str, Any]], chat_hist
     if chunks:
         context_parts = []
         for i, c in enumerate(chunks, start=1):
-            # Sanitize raw internal bracket tags like [Sheet 'Data' (Rows 1-39) Table] from excerpt text
+            # Sanitize raw internal bracket tags from excerpt text
             raw_text = c.get("text", "")
             clean_text = re.sub(r"^\[(Sheet|Page|Slide|Section|Row|Rows)[^\]]*\]\n?", "", raw_text, flags=re.IGNORECASE).strip()
             page_labels = ", ".join(c.get("pages", []))
@@ -99,12 +138,10 @@ async def generate_answer_stream(doc_id: str, question: str) -> AsyncGenerator[s
         client = get_groq_client()
         candidate_models = [
             config.LLM_MODEL,
-            "groq/compound-mini",
-            "groq/compound",
-            "qwen/qwen3.6-27b",
             "openai/gpt-oss-120b",
-            "llama-3.1-8b-instant",
-            "llama-3.3-70b-versatile"
+            "openai/gpt-oss-20b",
+            "groq/compound",
+            "qwen/qwen3.6-27b"
         ]
 
         # Deduplicate candidates while preserving order
@@ -132,15 +169,24 @@ async def generate_answer_stream(doc_id: str, question: str) -> AsyncGenerator[s
         if stream is None:
             raise last_exception or Exception("All candidate LLM models failed on Groq API.")
 
-        full_answer = []
+        accumulated_raw = ""
+        last_yielded_len = 0
+
         for chunk in stream:
             if chunk.choices and chunk.choices[0].delta.content:
                 token = chunk.choices[0].delta.content
-                full_answer.append(token)
-                token_event = {"type": "token", "content": token}
-                yield f"data: {json.dumps(token_event)}\n\n"
+                accumulated_raw += token
 
-        complete_text = "".join(full_answer)
+                # Strip <think>...</think> reasoning blocks from stream before yielding
+                clean_accumulated = re.sub(r'<think>[\s\S]*?(?:<\/think>|$)', '', accumulated_raw, flags=re.IGNORECASE)
+
+                if len(clean_accumulated) > last_yielded_len:
+                    new_clean_chunk = clean_accumulated[last_yielded_len:]
+                    last_yielded_len = len(clean_accumulated)
+                    token_event = {"type": "token", "content": new_clean_chunk}
+                    yield f"data: {json.dumps(token_event)}\n\n"
+
+        complete_text = ensure_markdown_table(accumulated_raw)
         database.add_chat_turn(doc_id, question, complete_text)
 
         done_event = {"type": "done", "status": "completed"}

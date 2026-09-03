@@ -1,8 +1,8 @@
 'use client';
 
-import React from 'react';
 import { Document } from '../lib/types';
 import UploadZone from './UploadZone';
+import ProcessingStatus from './ProcessingStatus';
 
 interface DocumentSidebarProps {
   documents: Document[];
@@ -58,10 +58,36 @@ export default function DocumentSidebar(props: DocumentSidebarProps) {
       {/* Upload Zone Card */}
       <UploadZone onUpload={props.onUpload} isUploading={props.isUploading} />
 
+      {/* Filter / Search Input */}
+      <div style={{ margin: '4px 0' }}>
+        <input
+          type="text"
+          placeholder="🔍 Filter documents..."
+          value={props.searchFilter}
+          onChange={(e) => props.onSearchFilterChange(e.target.value)}
+          style={{
+            width: '100%',
+            padding: '6px 10px',
+            fontSize: '0.78rem',
+            borderRadius: 'var(--radius-xs)',
+            border: '1px solid var(--border)',
+            background: 'var(--paper)',
+            color: 'var(--ink)'
+          }}
+        />
+      </div>
+
       {/* Recently Added List */}
       <div className="recent-header">
-        <span>Recently added</span>
-        <span style={{ cursor: 'pointer' }}>≡</span>
+        <span>Recently added ({filteredDocs.length})</span>
+        {props.searchFilter && (
+          <span
+            onClick={() => props.onSearchFilterChange('')}
+            style={{ cursor: 'pointer', fontSize: '0.72rem', color: 'var(--slate)', fontWeight: 600 }}
+          >
+            Clear filter
+          </span>
+        )}
       </div>
 
       {/* Document Items List */}
@@ -88,8 +114,9 @@ export default function DocumentSidebar(props: DocumentSidebarProps) {
                   <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {doc.filename}
                   </div>
-                  <div style={{ fontSize: '0.72rem', color: 'var(--muted)', marginTop: '2px' }}>
-                    Today • {sizeMb} MB
+                  <div style={{ fontSize: '0.72rem', color: 'var(--muted)', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                    <span>Today • {sizeMb} MB</span>
+                    <ProcessingStatus status={doc.status} errorMessage={doc.error_message} chunkCount={doc.chunk_count} compact />
                   </div>
                 </div>
                 <button

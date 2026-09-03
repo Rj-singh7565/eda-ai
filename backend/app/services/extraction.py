@@ -168,8 +168,162 @@ def extract_pptx(pptx_path: str) -> List[Dict[str, Any]]:
     return slides_data
 
 
+def _generate_dataframe_eda_sections(df, dataset_label: str = "Dataset", section_start: int = 1) -> List[Dict[str, Any]]:
+    """
+    Intelligently generate semantic EDA sections for large tabular datasets (100k+ rows).
+    Produces schema, descriptive statistics, categorical distributions, correlation insights,
+    and representative stratified sample records instead of naive row-by-row dumping.
+    """
+    import pandas as pd
+    import numpy as np
+
+    total_rows, total_cols = df.shape
+    sections_data = []
+    sec_idx = section_start
+
+    # Section 1: Overview & Schema
+    schema_rows = [["Column Name", "Data Type", "Non-Null Count", "Missing Count", "Null %"]]
+    for col in df.columns:
+        non_null = int(df[col].notna().sum())
+        missing = total_rows - non_null
+        pct_missing = f"{(missing / total_rows) * 100:.1f}%" if total_rows > 0 else "0.0%"
+        dtype_str = str(df[col].dtype)
+        schema_rows.append([str(col), dtype_str, str(non_null), str(missing), pct_missing])
+    
+    schema_table = extract_table_as_markdown(schema_rows)
+    overview_text = (
+        f"**{dataset_label} Overview**\n"
+        f"- **Total Records / Rows**: {total_rows:,}\n"
+        f"- **Total Attributes / Columns**: {total_cols}\n"
+        f"- **Columns List**: {', '.join([str(c) for c in df.columns])}\n\n"
+        f"### Data Schema & Types\n\n{schema_table}"
+    )
+    sections_data.append({
+        "page": sec_idx,
+        "page_label": f"{dataset_label} - Overview & Schema",
+        "text": overview_text,
+        "tables": [schema_table]
+    })
+    sec_idx += 1
+
+    # Section 2: Numeric Statistical Summary
+    numeric_df = df.select_dtypes(include=[np.number])
+    if not numeric_df.empty:
+        desc = numeric_df.describe().T
+        stats_rows = [["Feature", "Count", "Mean", "Std Dev", "Min", "25%", "50% (Median)", "75%", "Max"]]
+        for col, row in desc.iterrows():
+            def fmt_num(v):
+                if pd.isna(v):
+                    return "N/A"
+                return f"{v:.4f}".rstrip("0").rstrip(".") if isinstance(v, float) else str(v)
+            stats_rows.append([
+                str(col),
+                str(int(row.get("count", 0))),
+                fmt_num(row.get("mean")),
+                fmt_num(row.get("std")),
+                fmt_num(row.get("min")),
+                fmt_num(row.get("25%")),
+                fmt_num(row.get("50%")),
+                fmt_num(row.get("75%")),
+                fmt_num(row.get("max")),
+            ])
+        stats_table = extract_table_as_markdown(stats_rows)
+        sections_data.append({
+            "page": sec_idx,
+            "page_label": f"{dataset_label} - Statistical Summary",
+            "text": f"### Numeric Statistical Metrics ({len(numeric_df.columns)} numeric columns)\n\n{stats_table}",
+            "tables": [stats_table]
+        })
+        sec_idx += 1
+
+    # Section 3: Categorical Distributions & Cardinality
+    cat_df = df.select_dtypes(exclude=[np.number])
+    if not cat_df.empty:
+        cat_rows = [["Column", "Unique Values", "Top Categories (Frequency)"]]
+        for col in cat_df.columns:
+            val_counts = df[col].value_counts(dropna=False)
+            unique_cnt = len(val_counts)
+            top_items = []
+            for val, cnt in val_counts.head(5).items():
+                val_str = "None/Null" if pd.isna(val) else str(val).replace("\n", " ").strip()[:30]
+                pct = (cnt / total_rows * 100) if total_rows > 0 else 0
+                top_items.append(f"{val_str}: {cnt:,} ({pct:.1f}%)")
+            top_str = "; ".join(top_items)
+            cat_rows.append([str(col), str(unique_cnt), top_str])
+        
+        cat_table = extract_table_as_markdown(cat_rows)
+        sections_data.append({
+            "page": sec_idx,
+            "page_label": f"{dataset_label} - Categorical Distributions",
+            "text": f"### Categorical & Text Features Distribution\n\n{cat_table}",
+            "tables": [cat_table]
+        })
+        sec_idx += 1
+
+    # Section 4: Correlation & Key Relationship Insights (for numeric datasets)
+    if numeric_df.shape[1] >= 2:
+        try:
+            corr_matrix = numeric_df.corr()
+            corr_pairs = []
+            cols = numeric_df.columns.tolist()
+            for i in range(len(cols)):
+                for j in range(i + 1, len(cols)):
+                    c1, c2 = cols[i], cols[j]
+                    val = corr_matrix.loc[c1, c2]
+                    if not pd.isna(val) and abs(val) >= 0.3:
+                        corr_pairs.append((c1, c2, val))
+            
+            corr_pairs.sort(key=lambda x: abs(x[2]), reverse=True)
+            if corr_pairs:
+                corr_rows = [["Feature 1", "Feature 2", "Pearson Correlation", "Relationship"]]
+                for c1, c2, val in corr_pairs[:10]:
+                    rel = "Strong Positive" if val > 0.7 else "Moderate Positive" if val > 0.3 else "Strong Negative" if val < -0.7 else "Moderate Negative"
+                    corr_rows.append([str(c1), str(c2), f"{val:.3f}", rel])
+                corr_table = extract_table_as_markdown(corr_rows)
+                sections_data.append({
+                    "page": sec_idx,
+                    "page_label": f"{dataset_label} - Feature Correlations",
+                    "text": f"### Key Feature Correlations\n\n{corr_table}",
+                    "tables": [corr_table]
+                })
+                sec_idx += 1
+        except Exception as ce:
+            print(f"[EXTRACTION] Correlation calculation skipped: {ce}")
+
+    # Section 5: Representative Sample Records (Head, Quantiles, Tail)
+    sample_indices = []
+    # Head 3
+    sample_indices.extend(range(min(3, total_rows)))
+    # 25%, 50%, 75% quantile points
+    if total_rows > 10:
+        sample_indices.extend([int(total_rows * 0.25), int(total_rows * 0.5), int(total_rows * 0.75)])
+    # Tail 3
+    if total_rows > 3:
+        sample_indices.extend(range(max(0, total_rows - 3), total_rows))
+    
+    unique_indices = sorted(list(set(i for i in sample_indices if 0 <= i < total_rows)))
+    sample_df = df.iloc[unique_indices]
+    
+    headers = [str(c).strip() for c in sample_df.columns]
+    matrix = [["Row #"] + headers]
+    for orig_idx, row in sample_df.iterrows():
+        row_vals = [f"Row {orig_idx + 1}"] + [str(val).strip() if pd.notna(val) else "" for val in row]
+        matrix.append(row_vals)
+    
+    samples_table = extract_table_as_markdown(matrix)
+    sections_data.append({
+        "page": sec_idx,
+        "page_label": f"{dataset_label} - Representative Samples",
+        "text": f"### Representative Sample Records (Selected across {total_rows:,} rows)\n\n{samples_table}",
+        "tables": [samples_table]
+    })
+    sec_idx += 1
+
+    return sections_data
+
+
 def extract_excel(excel_path: str) -> List[Dict[str, Any]]:
-    """Extract worksheets from Excel (.xlsx/.xls) into 50-row batch sections."""
+    """Extract worksheets from Excel (.xlsx/.xls) with intelligent EDA profiling for large datasets."""
     import pandas as pd
     excel_file = pd.ExcelFile(excel_path)
     
@@ -183,40 +337,46 @@ def extract_excel(excel_path: str) -> List[Dict[str, Any]]:
             continue
             
         total_rows = len(df)
-        batch_size = 50
         
-        for start_idx in range(0, total_rows, batch_size):
-            end_idx = min(start_idx + batch_size, total_rows)
-            chunk_df = df.iloc[start_idx:end_idx]
-            
-            headers = [str(c).strip() for c in chunk_df.columns]
-            matrix = [headers]
-            for _, row in chunk_df.iterrows():
-                matrix.append([str(val).strip() if pd.notna(val) else "" for val in row])
+        # If dataset exceeds 100 rows, use intelligent EDA profiling
+        if total_rows > 100:
+            eda_sections = _generate_dataframe_eda_sections(df, dataset_label=f"Sheet '{sheet_name}'", section_start=section_counter)
+            sheets_data.extend(eda_sections)
+            section_counter += len(eda_sections)
+        else:
+            batch_size = 50
+            for start_idx in range(0, total_rows, batch_size):
+                end_idx = min(start_idx + batch_size, total_rows)
+                chunk_df = df.iloc[start_idx:end_idx]
                 
-            md_tbl = extract_table_as_markdown(matrix)
-            label = f"Sheet '{sheet_name}' (Rows {start_idx + 1}-{end_idx})"
-            
-            sheets_data.append({
-                "page": section_counter,
-                "page_label": label,
-                "text": md_tbl,
-                "tables": [md_tbl]
-            })
-            section_counter += 1
+                headers = [str(c).strip() for c in chunk_df.columns]
+                matrix = [headers]
+                for _, row in chunk_df.iterrows():
+                    matrix.append([str(val).strip() if pd.notna(val) else "" for val in row])
+                    
+                md_tbl = extract_table_as_markdown(matrix)
+                label = f"Sheet '{sheet_name}' (Rows {start_idx + 1}-{end_idx})"
+                
+                sheets_data.append({
+                    "page": section_counter,
+                    "page_label": label,
+                    "text": md_tbl,
+                    "tables": [md_tbl]
+                })
+                section_counter += 1
 
     return sheets_data
 
 
 def extract_csv(csv_path: str) -> List[Dict[str, Any]]:
-    """Extract CSV file into row batch sections with encoding fallback."""
+    """Extract CSV file with intelligent EDA profiling for large datasets (100k+ rows)."""
     import pandas as pd
     encodings = ["utf-8", "latin-1", "cp1252", "iso-8859-1"]
     df = None
     
     for enc in encodings:
         try:
-            df = pd.read_csv(csv_path, encoding=enc)
+            df = pd.read_csv(csv_path, encoding=enc, low_memory=False)
             break
         except Exception:
             continue
@@ -228,8 +388,13 @@ def extract_csv(csv_path: str) -> List[Dict[str, Any]]:
     if df.empty:
         return []
         
-    csv_data = []
     total_rows = len(df)
+    
+    # If dataset exceeds 100 rows, use intelligent EDA profiling
+    if total_rows > 100:
+        return _generate_dataframe_eda_sections(df, dataset_label="Dataset", section_start=1)
+
+    csv_data = []
     batch_size = 50
     section_counter = 1
     

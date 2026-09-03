@@ -79,7 +79,8 @@ def normalize_to_markdown(
 
         if tables:
             for tbl in tables:
-                body.append(f"{tbl}\n")
+                if tbl and tbl not in text:
+                    body.append(f"{tbl}\n")
 
         body.append("\n---\n")
 

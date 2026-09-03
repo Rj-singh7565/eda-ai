@@ -168,15 +168,19 @@
 +-------------------------+----------------------+------------------------------------+
 | Parameter               | Default Value        | Purpose / Description              |
 +-------------------------+----------------------+------------------------------------+
-| EMBEDDING_MODEL         | bge-small-en-v1.5    | SentenceTransformer embedding model|
-| EMBEDDING_DIMENSION     | 384                  | Vector dimension                   |
-| LLM_MODEL               | llama-3.1-8b-instant | Groq primary LLM model             |
+| EMBEDDING_MODEL         | BAAI/bge-small-en-v1.5| SentenceTransformer embedding model|
+| EMBEDDING_DIMENSION     | 384                  | Dense vector embedding dimension   |
+| LLM_MODEL               | openai/gpt-oss-120b  | Groq primary LLM inference model   |
 | CHUNK_SIZE              | 600                  | Target characters per text chunk   |
-| CHUNK_OVERLAP           | 80                   | Overlap character count            |
+| CHUNK_OVERLAP           | 100                  | Overlap character count            |
 | TOP_K                   | 5                    | Vector chunks retrieved per query  |
 | SIMILARITY_THRESHOLD    | 0.35                 | Minimum score threshold to keep    |
 | MAX_FILE_SIZE_MB        | 25                   | Maximum file size limit (MB)       |
 | MAX_ZIP_FILES           | 15                   | Max files per ZIP archive          |
 | MEMORY_TURNS            | 4                    | Session chat turns retained        |
+| PINECONE_INDEX_NAME     | eda-assistant        | Target Pinecone serverless index   |
+| STORAGE_TYPE            | local                | Storage driver (local/s3/supabase) |
+| EMBEDDING_CACHE_LIMIT   | 10000                | SHA-256 LRU vector cache entries   |
+| UPSERT_BATCH_SIZE       | 200                  | Vectors per Pinecone bulk upsert   |
 +-------------------------+----------------------+------------------------------------+
 ================================================================================

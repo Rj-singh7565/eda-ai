@@ -152,13 +152,12 @@ def run_ingestion_pipeline(doc_id: str, file_path: str, file_type: str = "pdf"):
             )
             return
 
-        # Phase 4: Embedding
+        # Phase 4: Embedding with hardware acceleration and SHA-256 caching
         database.update_document_status(doc_id, "embedding")
-        embedder = embeddings.get_embedding_model()
         texts_to_embed = [c["text"] for c in chunks]
-        vectors = embedder.encode(texts_to_embed, normalize_embeddings=True).tolist()
+        vectors = embeddings.generate_embeddings(texts_to_embed)
 
-        # Phase 5: Indexing to Pinecone
+        # Phase 5: Indexing to Pinecone (Batch upserts)
         database.update_document_status(doc_id, "indexing")
         pc = Pinecone(api_key=config.PINECONE_API_KEY)
         index_name = config.PINECONE_INDEX_NAME
@@ -194,9 +193,15 @@ def run_ingestion_pipeline(doc_id: str, file_path: str, file_type: str = "pdf"):
         except Exception as e:
             print(f"[WARN] Failed to check Pinecone index dimension: {e}")
 
-        # Batch upsert vectors into doc_id namespace
+        # Batch upsert vectors into doc_id namespace (batch_size = 200)
         pinecone_vectors = []
+        seen_vector_ids = set()
         for c, vec in zip(chunks, vectors):
+            vec_id = str(c["chunk_id"])
+            if vec_id in seen_vector_ids:
+                continue
+            seen_vector_ids.add(vec_id)
+
             raw_pages = c.get("pages", [])
             pages = [str(p) for p in raw_pages] if isinstance(raw_pages, list) else [str(raw_pages)]
 
@@ -214,7 +219,7 @@ def run_ingestion_pipeline(doc_id: str, file_path: str, file_type: str = "pdf"):
                 page_numbers.append(clean_p)
 
             pinecone_vectors.append({
-                "id": c["chunk_id"],
+                "id": vec_id,
                 "values": vec,
                 "metadata": {
                     "doc_id": str(doc_id),
@@ -222,13 +227,13 @@ def run_ingestion_pipeline(doc_id: str, file_path: str, file_type: str = "pdf"):
                     "pages": pages,
                     "page_numbers": page_numbers,
                     "is_table": bool(c.get("is_table", False)),
-                    "text": str(c.get("text", ""))
+                    "text": str(c.get("text", ""))[:1500]
                 }
             })
 
-        batch_size = 100
-        for i in range(0, len(pinecone_vectors), batch_size):
-            batch = pinecone_vectors[i:i + batch_size]
+        upsert_batch_size = 200
+        for i in range(0, len(pinecone_vectors), upsert_batch_size):
+            batch = pinecone_vectors[i:i + upsert_batch_size]
             index.upsert(vectors=batch, namespace=doc_id)
 
         # Phase 6: Ready!

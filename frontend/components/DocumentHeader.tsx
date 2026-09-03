@@ -50,7 +50,7 @@ export default function DocumentHeader({
           <span className="meta-pill">
             💾 {formattedSize}
           </span>
-          <ProcessingStatus status={activeDoc.status} errorMessage={activeDoc.error_message} />
+          <ProcessingStatus status={activeDoc.status} errorMessage={activeDoc.error_message} chunkCount={activeDoc.chunk_count} />
         </div>
       </div>
 

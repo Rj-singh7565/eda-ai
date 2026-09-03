@@ -72,6 +72,7 @@ async def upload_document(request: Request, background_tasks: BackgroundTasks, f
 
         created_docs = []
         skipped_files = []
+        seen_paths = set()
 
         try:
             with zipfile.ZipFile(temp_path, "r") as z:
@@ -80,8 +81,14 @@ async def upload_document(request: Request, background_tasks: BackgroundTasks, f
                 for entry in zip_entries:
                     clean_entry_name = entry.filename.replace("\\", "/").strip("/")
                     raw_name = os.path.basename(clean_entry_name)
-                    if not raw_name or raw_name.startswith(".") or "/." in clean_entry_name or clean_entry_name.startswith("__MACOSX") or "__MACOSX/" in clean_entry_name:
+                    if not raw_name or raw_name.startswith(".") or raw_name.startswith("._") or "/." in clean_entry_name or clean_entry_name.startswith("__MACOSX") or "__MACOSX/" in clean_entry_name or raw_name in ("Thumbs.db", ".DS_Store", "desktop.ini"):
                         continue
+
+                    # Deduplicate duplicate ZIP archive entries
+                    normalized_key = clean_entry_name.lower()
+                    if normalized_key in seen_paths:
+                        continue
+                    seen_paths.add(normalized_key)
 
                     # If in subfolder, prefix with folder name for clarity (e.g. data_report.pdf)
                     display_filename = clean_entry_name.replace("/", "_")
