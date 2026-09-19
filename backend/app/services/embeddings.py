@@ -3,6 +3,7 @@ Embedding Service — Hardware-adaptive SentenceTransformer embedding manager wi
 """
 
 import hashlib
+import threading
 from typing import List, Union
 import torch
 
@@ -10,6 +11,7 @@ from backend.app import config
 
 _embedding_model = None
 _embedding_device = None
+_model_lock = threading.Lock()
 _EMBEDDING_CACHE: dict = {}  # sha256 -> list of float vectors (max 10,000 entries)
 _MAX_CACHE_ENTRIES = 10000
 
@@ -26,7 +28,7 @@ def get_device() -> str:
             _embedding_device = "cpu"
             # Set PyTorch thread count for optimal multi-threaded CPU matrix operations
             try:
-                torch.set_num_threads(min(8, torch.get_num_threads()))
+                torch.set_num_threads(min(2, max(1, torch.get_num_threads())))
             except Exception:
                 pass
         print(f"[EMBEDDINGS] Hardware compute device: {_embedding_device}")
@@ -34,17 +36,19 @@ def get_device() -> str:
 
 
 def get_embedding_model():
-    """Load SentenceTransformer model lazily onto the optimal compute device."""
+    """Load SentenceTransformer model lazily onto the optimal compute device with thread safety."""
     global _embedding_model
     if _embedding_model is None:
-        device = get_device()
-        print(f"[EMBEDDINGS] Loading {config.EMBEDDING_MODEL} on device '{device}'...")
-        from sentence_transformers import SentenceTransformer
-        try:
-            _embedding_model = SentenceTransformer(config.EMBEDDING_MODEL, device=device, local_files_only=True)
-        except Exception:
-            _embedding_model = SentenceTransformer(config.EMBEDDING_MODEL, device=device)
-        print("[EMBEDDINGS] Embedding model successfully loaded.")
+        with _model_lock:
+            if _embedding_model is None:
+                device = get_device()
+                print(f"[EMBEDDINGS] Loading {config.EMBEDDING_MODEL} on device '{device}'...")
+                from sentence_transformers import SentenceTransformer
+                try:
+                    _embedding_model = SentenceTransformer(config.EMBEDDING_MODEL, device=device, local_files_only=True)
+                except Exception:
+                    _embedding_model = SentenceTransformer(config.EMBEDDING_MODEL, device=device)
+                print("[EMBEDDINGS] Embedding model successfully loaded.")
     return _embedding_model
 
 

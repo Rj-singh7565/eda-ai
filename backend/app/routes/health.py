@@ -18,5 +18,7 @@ async def health_check():
         "llm_model": config.LLM_MODEL,
         "pinecone_index": config.PINECONE_INDEX_NAME,
         "database": "postgresql" if config.DATABASE_URL and config.DATABASE_URL.startswith("postgres") else "sqlite",
-        "storage": config.STORAGE_TYPE
+        "storage": config.STORAGE_TYPE,
+        "pinecone_configured": bool(config.PINECONE_API_KEY and config.PINECONE_API_KEY != "your_pinecone_api_key"),
+        "groq_configured": bool(config.GROQ_API_KEY and config.GROQ_API_KEY != "your_groq_api_key")
     }
