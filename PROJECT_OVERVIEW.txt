@@ -46,14 +46,14 @@
 | Domain / Layer       | Technologies & Libraries                               |
 +----------------------+--------------------------------------------------------+
 | Backend Framework    | Python 3.12+, FastAPI, Uvicorn, Pydantic v2, SlowAPI   |
-| Frontend Workspace   | Next.js 14, React 18, TypeScript, Vanilla CSS           |
+| Frontend Workspace   | Next.js 14, React 18, TypeScript, Vanilla CSS          |
 | Database Storage     | SQLite3 (`eda_assistant.db`) with auto schema migration|
 | Vector Store         | Pinecone Serverless Index (Cosine Similarity)          |
 | LLM Engine           | Groq API (Meta Llama 3.3 70B Versatile SSE Streaming)  |
 | Embedding Model      | SentenceTransformers (`BAAI/bge-small-en-v1.5`, 384-d) |
 | PDF Extraction       | pdfplumber (table matrix) + PyPDF (text body)          |
 | Word Extraction      | python-docx (paragraphs, tables, section boundaries)   |
-| Presentation Extraction| python-pptx (slide frames, tables, speaker notes)     |
+| Presentation Extraction| python-pptx (slide frames, tables, speaker notes)    |
 | Spreadsheet Parsing  | pandas + openpyxl (50-row batch Markdown tables)       |
 | Image OCR            | pytesseract + Pillow (PNG/JPG/JPEG/BMP/TIFF)           |
 | Resiliency & Retries | Tenacity Exponential Backoff                           |

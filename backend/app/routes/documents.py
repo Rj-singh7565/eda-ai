@@ -21,6 +21,14 @@ async def list_all_documents():
     return database.list_documents()
 
 
+@router.get("/stats")
+@router.get("/api/stats")
+@router.get("/api/dashboard/overview")
+async def get_dashboard_overview():
+    """Get aggregated system statistics, storage usage, and activity feed."""
+    return database.get_dashboard_stats()
+
+
 @router.get("/documents/{doc_id}")
 @router.get("/api/documents/{doc_id}")
 @router.get("/status/{doc_id}")
@@ -56,8 +64,9 @@ def _purge_pinecone_namespace(doc_id: str):
     try:
         index = retrieval.get_pinecone_index()
         index.delete(delete_all=True, namespace=doc_id)
+        print(f"[PINECONE] Successfully deleted all vector chunks in namespace: '{doc_id}'")
     except Exception as e:
-        print(f"[WARN] Failed to purge Pinecone namespace {doc_id}: {e}")
+        print(f"[WARN] Failed to purge Pinecone namespace '{doc_id}': {e}")
 
 
 @router.delete("/documents/{doc_id}")

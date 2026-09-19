@@ -24,6 +24,10 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_STORAGE_BUCKET = os.getenv("SUPABASE_STORAGE_BUCKET", "documents")
 
+# Frontend & CORS Configurations
+FRONTEND_URL = os.getenv("FRONTEND_URL")
+CORS_ORIGINS = os.getenv("CORS_ORIGINS")
+
 def validate_config():
     """Verify that mandatory API keys are present."""
     missing = []
@@ -33,11 +37,11 @@ def validate_config():
         missing.append("PINECONE_API_KEY")
     
     if missing:
-        print(f"[WARNING] Missing environment variables: {', '.join(missing)}. Ensure they are set in your .env file.")
+        print(f"[WARNING] Missing environment variables: {', '.join(missing)}. Ensure they are set in your .env file or environment.")
 
 # ── Models ────────────────────────────────────────────────────────────
-EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
-EMBEDDING_DIMENSION = 384
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
+EMBEDDING_DIMENSION = int(os.getenv("EMBEDDING_DIMENSION", "384"))
 LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-oss-120b")
 
 # ── Chunking & Retrieval Parameters ──────────────────────────────────

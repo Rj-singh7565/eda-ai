@@ -38,12 +38,12 @@ export default function ChatMessage({ message, onCitationClick }: ChatMessagePro
           const rows = lines.slice(2).map((r) => r.split('|').slice(1, -1).map((c) => c.trim()));
 
           return (
-            <div key={pIdx} className="table-responsive-wrapper" style={{ overflowX: 'auto', margin: '12px 0', borderRadius: '8px', border: '1px solid var(--border)' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.86rem', textAlign: 'left' }}>
+            <div key={pIdx} className="table-responsive-wrapper" style={{ overflowX: 'auto', width: '100%', margin: '12px 0', borderRadius: '8px', border: '1px solid var(--border)', WebkitOverflowScrolling: 'touch' }}>
+              <table style={{ width: '100%', minWidth: 'max-content', borderCollapse: 'collapse', fontSize: '0.86rem', textAlign: 'left' }}>
                 <thead>
                   <tr style={{ background: 'var(--paper-soft, rgba(255, 255, 255, 0.05))', borderBottom: '2px solid var(--border)' }}>
                     {headers.map((h, hIdx) => (
-                      <th key={hIdx} style={{ padding: '8px 12px', fontWeight: 600, color: 'var(--slate)' }}>
+                      <th key={hIdx} style={{ padding: '8px 12px', fontWeight: 600, color: 'var(--slate)', whiteSpace: 'nowrap' }}>
                         {h}
                       </th>
                     ))}
@@ -53,7 +53,7 @@ export default function ChatMessage({ message, onCitationClick }: ChatMessagePro
                   {rows.map((row, rIdx) => (
                     <tr key={rIdx} style={{ borderBottom: rIdx === rows.length - 1 ? 'none' : '1px solid var(--border)' }}>
                       {row.map((cell, cIdx) => (
-                        <td key={cIdx} style={{ padding: '8px 12px' }}>
+                        <td key={cIdx} style={{ padding: '8px 12px', whiteSpace: 'nowrap' }}>
                           {cell}
                         </td>
                       ))}
@@ -68,42 +68,9 @@ export default function ChatMessage({ message, onCitationClick }: ChatMessagePro
 
       if (!part.trim()) return null;
 
-      // Fallback for non-table text lines from assistant: convert lines/key-values into a 2-column tabular view
-      if (!isUser) {
-        const rawLines = part.trim().split('\n').filter((l) => l.trim());
-        const tableRows = rawLines.map((line) => {
-          const lineClean = line.replace(/^[-*•\d+.\s]+/, '').trim();
-          if (lineClean.includes(':')) {
-            const [k, v] = lineClean.split(':', 2);
-            return { key: k.trim(), val: v.trim() };
-          }
-          return { key: 'Finding / Details', val: lineClean };
-        });
-
-        return (
-          <div key={pIdx} className="table-responsive-wrapper" style={{ overflowX: 'auto', margin: '12px 0', borderRadius: '8px', border: '1px solid var(--border)' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.86rem', textAlign: 'left' }}>
-              <thead>
-                <tr style={{ background: 'var(--paper-soft, rgba(255, 255, 255, 0.05))', borderBottom: '2px solid var(--border)' }}>
-                  <th style={{ padding: '8px 12px', fontWeight: 600, color: 'var(--slate)' }}>Attribute / Field</th>
-                  <th style={{ padding: '8px 12px', fontWeight: 600, color: 'var(--slate)' }}>Details / Value</th>
-                </tr>
-              </thead>
-              <tbody>
-                {tableRows.map((row, rIdx) => (
-                  <tr key={rIdx} style={{ borderBottom: rIdx === tableRows.length - 1 ? 'none' : '1px solid var(--border)' }}>
-                    <td style={{ padding: '8px 12px', fontWeight: 600, width: '30%' }}>{row.key}</td>
-                    <td style={{ padding: '8px 12px' }}>{row.val}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        );
-      }
-
+      // Render prose, insights, bullet points, or natural language explanation
       return (
-        <div key={pIdx} style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+        <div key={pIdx} style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.6, margin: '6px 0' }}>
           {part}
         </div>
       );

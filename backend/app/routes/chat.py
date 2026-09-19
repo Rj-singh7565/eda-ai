@@ -42,7 +42,12 @@ async def ask_question_stream(request: Request, payload: QuestionStreamRequest):
 
     return StreamingResponse(
         llm.generate_answer_stream(doc_id, question),
-        media_type="text/event-stream"
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
     )
 
 

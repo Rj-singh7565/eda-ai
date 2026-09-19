@@ -1,38 +1,56 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Document, ChatMessage, Citation } from '../lib/types';
+import { Document, ChatMessage, Citation, DashboardStats, SystemHealth, NavTab } from '../lib/types';
 import {
   fetchDocuments,
+  fetchDashboardStats,
+  fetchSystemHealth,
   uploadDocumentFile,
   deleteDocumentRecord,
   fetchDocumentMarkdown,
-  fetchChatHistory
+  fetchChatHistory,
+  API_BASE
 } from '../lib/api';
 
 import NavSidebar from '../components/NavSidebar';
-import DocumentSidebar from '../components/DocumentSidebar';
+import GlobalHeader from '../components/GlobalHeader';
+import OverviewDashboard from '../components/dashboard/OverviewDashboard';
+import DatasetsView from '../components/dashboard/DatasetsView';
+import HistoryView from '../components/dashboard/HistoryView';
+import StorageView from '../components/dashboard/StorageView';
+import SettingsView from '../components/dashboard/SettingsView';
+import AnalysisWorkspace from '../components/analysis/AnalysisWorkspace';
+
 import SourceViewer from '../components/SourceViewer';
 import ChatWindow from '../components/ChatWindow';
 import ChatInput from '../components/ChatInput';
 import CitationsPanel from '../components/CitationsPanel';
+import DocumentViewer from '../components/DocumentViewer';
+import ExportModal from '../components/ExportModal';
 
 export default function DashboardPage() {
-  const [activeNavTab, setActiveNavTab] = useState('documents');
+  const [activeNavTab, setActiveNavTab] = useState<NavTab>('overview');
   const [documents, setDocuments] = useState<Document[]>([]);
   const [activeDocId, setActiveDocId] = useState<string | null>(null);
-  const [sidebarSearch, setSidebarSearch] = useState('');
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [health, setHealth] = useState<SystemHealth | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+
+  // Analysis Workspace state
   const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<'chat' | 'source'>('chat');
   const [isCitationsDrawerOpen, setIsCitationsDrawerOpen] = useState(false);
-
   const [activeCoordinate, setActiveCoordinate] = useState('1');
   const [selectedCitationId, setSelectedCitationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [markdownContent, setMarkdownContent] = useState('');
   const [activeCitations, setActiveCitations] = useState<Citation[]>([]);
 
-  const activeDoc = documents.find((d) => d.doc_id === activeDocId) || null;
+  // Preview Modal state
+  const [previewDoc, setPreviewDoc] = useState<Document | null>(null);
+  const [previewMarkdown, setPreviewMarkdown] = useState<string>('');
+
+  const activeDoc = documents.find((d) => d.doc_id === activeDocId) || (documents.length > 0 ? documents[0] : null);
 
   const [toast, setToast] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
 
@@ -44,8 +62,30 @@ export default function DashboardPage() {
   };
 
   useEffect(() => {
-    loadDocs();
+    loadInitialData();
   }, []);
+
+  const loadInitialData = async () => {
+    try {
+      const [backendDocs, dashboardStats, systemHealth] = await Promise.all([
+        fetchDocuments().catch(() => []),
+        fetchDashboardStats().catch(() => null),
+        fetchSystemHealth().catch(() => null)
+      ]);
+
+      if (Array.isArray(backendDocs)) {
+        setDocuments(backendDocs);
+        if (backendDocs.length > 0) {
+          setActiveDocId((prev) => (prev && backendDocs.some((d) => d.doc_id === prev) ? prev : backendDocs[0].doc_id));
+        }
+      }
+
+      if (dashboardStats) setStats(dashboardStats);
+      if (systemHealth) setHealth(systemHealth);
+    } catch (err: any) {
+      console.error('Initial data load note:', err);
+    }
+  };
 
   useEffect(() => {
     if (!activeDocId) {
@@ -82,6 +122,7 @@ export default function DashboardPage() {
       .catch(() => {});
   }, [activeDocId]);
 
+  // Polling loop for processing documents
   useEffect(() => {
     const processingDocs = documents.filter((d) =>
       ['processing', 'parsing', 'normalizing', 'chunking', 'embedding', 'indexing'].includes(d.status)
@@ -95,40 +136,21 @@ export default function DashboardPage() {
         if (Array.isArray(updatedDocs)) {
           setDocuments(updatedDocs);
         }
+        const updatedStats = await fetchDashboardStats();
+        if (updatedStats) setStats(updatedStats);
       } catch (e) {
-        console.error('Polling status error:', e);
+        console.error('Polling status note:', e);
       }
     }, 2000);
 
     return () => clearInterval(interval);
   }, [documents]);
 
-  const loadDocs = async () => {
-    try {
-      const backendDocs = await fetchDocuments();
-      if (Array.isArray(backendDocs)) {
-        setDocuments(backendDocs);
-        if (backendDocs.length > 0) {
-          setActiveDocId((prev) => (prev && backendDocs.some(d => d.doc_id === prev) ? prev : backendDocs[0].doc_id));
-        } else {
-          setActiveDocId(null);
-        }
-      }
-    } catch (err: any) {
-      console.error('Failed to load documents:', err);
-      showToast(
-        'error',
-        'Unable to connect to backend server (http://localhost:8000). Please start the backend service.'
-      );
-    }
-  };
-
   const handleUpload = async (file: File) => {
     setIsUploading(true);
     try {
       const res = await uploadDocumentFile(file);
-      
-      // Optimistically add document records returned by the upload endpoint
+
       const newDocs: Document[] = [];
       if (res.documents && Array.isArray(res.documents) && res.documents.length > 0) {
         newDocs.push(...res.documents);
@@ -153,18 +175,16 @@ export default function DashboardPage() {
 
       showToast('success', res.message || `Uploaded ${file.name} successfully. Ingestion initiated.`);
 
-      // Re-fetch full documents from backend
-      const updatedDocs = await fetchDocuments();
-      if (Array.isArray(updatedDocs)) {
-        setDocuments(updatedDocs);
-      }
+      const [updatedDocs, updatedStats] = await Promise.all([
+        fetchDocuments().catch(() => []),
+        fetchDashboardStats().catch(() => null)
+      ]);
+
+      if (Array.isArray(updatedDocs)) setDocuments(updatedDocs);
+      if (updatedStats) setStats(updatedStats);
     } catch (err: any) {
-      console.error('Upload failed:', err);
-      const isFetchErr = err.message && err.message.includes('Failed to fetch');
-      const errDisplay = isFetchErr
-        ? 'Could not connect to FastAPI backend server (http://localhost:8000). Please verify backend service is running.'
-        : err.message || 'File upload failed.';
-      showToast('error', errDisplay);
+      console.error('Upload error:', err);
+      showToast('error', err.message || 'File upload failed.');
     } finally {
       setIsUploading(false);
     }
@@ -181,20 +201,39 @@ export default function DashboardPage() {
 
     try {
       await deleteDocumentRecord(docId);
-      const backendDocs = await fetchDocuments();
+      const [backendDocs, updatedStats] = await Promise.all([
+        fetchDocuments().catch(() => []),
+        fetchDashboardStats().catch(() => null)
+      ]);
+
       if (Array.isArray(backendDocs)) {
         setDocuments(backendDocs);
         if (backendDocs.length === 0) {
           setActiveDocId(null);
         }
       }
-    } catch (err) {
+      if (updatedStats) setStats(updatedStats);
+      showToast('info', 'Dataset deleted successfully.');
+    } catch (err: any) {
       console.error('Deletion error:', err);
+      showToast('error', 'Failed to delete dataset.');
+    }
+  };
+
+  const handlePreview = async (doc: Document) => {
+    setPreviewDoc(doc);
+    try {
+      const md = await fetchDocumentMarkdown(doc.doc_id);
+      setPreviewMarkdown(md);
+    } catch (e) {
+      setPreviewMarkdown('# Document Preview\n\nMarkdown representation is loading or processing.');
     }
   };
 
   const handleSendQuestion = async (questionText: string) => {
     if (!activeDocId || !activeDoc || activeDoc.status !== 'ready') return;
+
+    const startTime = Date.now();
 
     const userMsg: ChatMessage = {
       id: `user-${Date.now()}`,
@@ -208,17 +247,17 @@ export default function DashboardPage() {
       sender: 'assistant',
       text: '',
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      streaming: true
+      streaming: true,
+      latencyMs: 0
     };
 
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
 
-    const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
     try {
-      const response = await fetch(`${apiBase}/api/chat/stream`, {
+      const response = await fetch(`${API_BASE}/api/chat/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ doc_id: activeDocId, question: questionText }),
+        body: JSON.stringify({ doc_id: activeDocId, question: questionText })
       });
 
       if (!response.ok) {
@@ -228,9 +267,7 @@ export default function DashboardPage() {
           if (errData && (errData.detail || errData.message)) {
             errorDetail = errData.detail || errData.message;
           }
-        } catch (_) {
-          // Fallback if non-JSON response
-        }
+        } catch (_) {}
         throw new Error(errorDetail);
       }
 
@@ -274,25 +311,24 @@ export default function DashboardPage() {
                 }
                 setMessages((prev) =>
                   prev.map((msg) =>
-                    msg.id === assistantMsg.id
-                      ? { ...msg, citations: mappedCitations }
-                      : msg
+                    msg.id === assistantMsg.id ? { ...msg, citations: mappedCitations } : msg
                   )
                 );
               } else if (event.type === 'token') {
                 setMessages((prev) =>
                   prev.map((msg) =>
-                    msg.id === assistantMsg.id
-                      ? { ...msg, text: msg.text + event.content }
-                      : msg
+                    msg.id === assistantMsg.id ? { ...msg, text: msg.text + event.content } : msg
                   )
                 );
               } else if (event.type === 'done') {
+                const elapsed = Date.now() - startTime;
                 setMessages((prev) =>
                   prev.map((msg) =>
-                    msg.id === assistantMsg.id ? { ...msg, streaming: false } : msg
+                    msg.id === assistantMsg.id ? { ...msg, streaming: false, latencyMs: elapsed } : msg
                   )
                 );
+                // Refresh stats after Q&A completes
+                fetchDashboardStats().then((s) => s && setStats(s)).catch(() => {});
               } else if (event.type === 'error') {
                 setMessages((prev) =>
                   prev.map((msg) =>
@@ -311,32 +347,32 @@ export default function DashboardPage() {
     } catch (err: any) {
       const isFetchErr = err.message && err.message.includes('Failed to fetch');
       const errDisplay = isFetchErr
-        ? 'Could not connect to FastAPI backend server (http://localhost:8000). Please verify backend service is running.'
-        : (err.message && err.message.startsWith('Error:'))
-        ? err.message
+        ? `Could not connect to FastAPI backend server (${API_BASE}). Please verify backend service is running.`
         : `Error: ${err.message || 'Failed to connect to assistant backend.'}`;
 
       setMessages((prev) =>
         prev.map((msg) =>
-          msg.id === assistantMsg.id
-            ? { ...msg, text: errDisplay, streaming: false }
-            : msg
+          msg.id === assistantMsg.id ? { ...msg, text: errDisplay, streaming: false } : msg
         )
       );
     }
   };
 
-  const handleSelectCoordinate = (coord: string) => {
-    setActiveCoordinate(coord);
-  };
+  // Export Modal state
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
 
-  const handleSelectCitation = (citationId: string) => {
-    setSelectedCitationId(citationId);
-    setIsCitationsDrawerOpen(true);
+  const handleExportReport = () => {
+    if (!messages.length) {
+      showToast('info', 'No analysis queries yet. Ask a question or run a query before exporting.');
+      setIsExportModalOpen(true);
+      return;
+    }
+    setIsExportModalOpen(true);
   };
 
   return (
-    <div className="app-viewport" style={{ position: 'relative' }}>
+    <div className="app-viewport">
+      {/* Toast Notification */}
       {toast && (
         <div
           style={{
@@ -393,87 +429,111 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {/* Preview Modal */}
+      {previewDoc && (
+        <DocumentViewer
+          isOpen={true}
+          filename={previewDoc.filename}
+          markdownContent={previewMarkdown}
+          onClose={() => setPreviewDoc(null)}
+        />
+      )}
+
+      {/* Multi-Format Export Modal (PDF, Excel, CSV, JSON, Markdown) */}
+      <ExportModal
+        isOpen={isExportModalOpen}
+        onClose={() => setIsExportModalOpen(false)}
+        activeDoc={activeDoc}
+        messages={messages}
+        onShowToast={showToast}
+      />
+
+      {/* Left Navigation Rail (~260px) */}
       <NavSidebar
         activeTab={activeNavTab}
         onTabChange={setActiveNavTab}
+        activeDoc={activeDoc}
+        onPreviewDoc={handlePreview}
       />
 
-      <DocumentSidebar
-        documents={documents}
-        activeDocId={activeDocId}
-        onSelectDoc={(id) => setActiveDocId(id)}
-        onDeleteDoc={handleDelete}
-        onUpload={handleUpload}
-        isUploading={isUploading}
-        searchFilter={sidebarSearch}
-        onSearchFilterChange={setSidebarSearch}
-      />
+      {/* Main Workspace */}
+      <div className="main-workspace-wrapper">
+        {/* Top Global Header */}
+        <GlobalHeader
+          activeTab={activeNavTab}
+          activeDoc={activeDoc}
+          documents={documents}
+          onSelectDoc={(id) => setActiveDocId(id)}
+          onExportReport={handleExportReport}
+        />
 
-      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', backgroundColor: 'var(--surface)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 20px', backgroundColor: 'var(--surface)', borderBottom: '1px solid var(--border)' }}>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button
-              onClick={() => setActiveWorkspaceTab('chat')}
-              style={{
-                padding: '6px 14px',
-                borderRadius: 'var(--radius-xs)',
-                fontSize: '0.84rem',
-                fontWeight: 600,
-                border: '1px solid',
-                cursor: 'pointer',
-                borderColor: activeWorkspaceTab === 'chat' ? 'var(--slate)' : 'var(--border)',
-                backgroundColor: activeWorkspaceTab === 'chat' ? 'var(--slate-soft)' : 'var(--paper)',
-                color: activeWorkspaceTab === 'chat' ? 'var(--slate)' : 'var(--ink)'
+        {/* Dynamic Tab Body */}
+        <div className="workspace-tab-viewport">
+          {activeNavTab === 'overview' && (
+            <OverviewDashboard
+              stats={stats}
+              documents={documents}
+              activeDoc={activeDoc}
+              onSelectDoc={(id) => setActiveDocId(id)}
+              onPreviewDoc={handlePreview}
+              onDeleteDoc={handleDelete}
+              onStartAnalysis={(id) => {
+                setActiveDocId(id);
+                setActiveNavTab('analysis');
               }}
-            >
-              💬 AI Assistant
-            </button>
-            <button
-              onClick={() => setActiveWorkspaceTab('source')}
-              style={{
-                padding: '6px 14px',
-                borderRadius: 'var(--radius-xs)',
-                fontSize: '0.84rem',
-                fontWeight: 600,
-                border: '1px solid',
-                cursor: 'pointer',
-                borderColor: activeWorkspaceTab === 'source' ? 'var(--slate)' : 'var(--border)',
-                backgroundColor: activeWorkspaceTab === 'source' ? 'var(--slate-soft)' : 'var(--paper)',
-                color: activeWorkspaceTab === 'source' ? 'var(--slate)' : 'var(--ink)'
-              }}
-            >
-              📄 Document Viewer {activeDoc ? `(${activeDoc.filename})` : ''}
-            </button>
-          </div>
-        </div>
-
-        <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-          {activeWorkspaceTab === 'chat' ? (
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%' }}>
-              <ChatInput
-                disabled={!activeDoc}
-                isDocReady={activeDoc?.status === 'ready'}
-                docStatus={activeDoc?.status}
-                onSend={handleSendQuestion}
-              />
-              <ChatWindow
-                messages={messages}
-                activeDocReady={activeDoc?.status === 'ready'}
-                onSampleClick={handleSendQuestion}
-                onCitationClick={handleSelectCitation}
-                onClearChat={() => setMessages([])}
-              />
-            </div>
-          ) : (
-            <SourceViewer
-              filename={activeDoc?.filename || ''}
-              activeCoordinate={activeCoordinate}
-              onSelectCoordinate={handleSelectCoordinate}
-              markdownContent={markdownContent}
+              onUpload={handleUpload}
+              isUploading={isUploading}
+              onNavigateTab={setActiveNavTab}
             />
           )}
+
+          {activeNavTab === 'datasets' && (
+            <DatasetsView
+              documents={documents}
+              activeDocId={activeDocId}
+              onSelectDoc={(id) => setActiveDocId(id)}
+              onPreviewDoc={handlePreview}
+              onDeleteDoc={handleDelete}
+              onStartAnalysis={(id) => {
+                setActiveDocId(id);
+                setActiveNavTab('analysis');
+              }}
+              onUpload={handleUpload}
+              isUploading={isUploading}
+            />
+          )}
+
+          {activeNavTab === 'analysis' && (
+            <AnalysisWorkspace
+              documents={documents}
+              activeDoc={activeDoc}
+              onSelectDoc={(id) => setActiveDocId(id)}
+              messages={messages}
+              onSendMessage={handleSendQuestion}
+              onClearChat={() => setMessages([])}
+              onExportPDF={handleExportReport}
+              health={health}
+              isStreaming={messages.some((m) => m.streaming)}
+            />
+          )}
+
+          {activeNavTab === 'history' && (
+            <HistoryView
+              documents={documents}
+              activeDoc={activeDoc}
+              messages={messages}
+              onSelectDoc={(id) => setActiveDocId(id)}
+              onOpenAnalysis={() => setActiveNavTab('analysis')}
+            />
+          )}
+
+          {activeNavTab === 'storage' && (
+            <StorageView documents={documents} stats={stats} health={health} />
+          )}
+
+          {activeNavTab === 'settings' && <SettingsView health={health} />}
         </div>
-      </main>
+      </div>
     </div>
   );
 }

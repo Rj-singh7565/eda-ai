@@ -88,13 +88,15 @@ edaa/
 │       │
 │       └── services/                 # Core Business Logic & Pipelines
 │           ├── __init__.py
+│           ├── dataset_engine.py     # Deterministic DataFrame operations (Filter, Aggregations, GroupBy), 100% column preservation & schema inspector
+│           ├── query_router.py       # Query intent classifier and schema-aware operation planner (Structured vs Document RAG)
 │           ├── ingestion.py          # Document ingestion pipeline orchestrator & format detector
 │           ├── extraction.py         # Multi-format parsers (PDF, DOCX, PPTX, XLSX, CSV, TXT, MD, Image OCR)
 │           ├── normalization.py      # Unified Markdown conversion with coordinate marker injection
 │           ├── chunking.py           # Semantic coordinate-aware text chunking with overlap
 │           ├── embeddings.py         # Local HuggingFace sentence transformer (BAAI/bge-small-en-v1.5)
-│           ├── retrieval.py          # Pinecone vector search, similarity thresholding, namespace management
-│           ├── llm.py                # LLM client (Groq/Gemini), prompt construction, SSE token streaming
+│           ├── retrieval.py          # Adaptive Multi-Tier Search (Vector -> Lexical Markdown -> Structured Dataset fallback)
+│           ├── llm.py                # LLM client & SSE streamer integrating Query Router, DataFrame Engine & AI insights
 │           └── storage.py            # Storage driver abstraction (Local, S3, Supabase)
 │
 ├── frontend/                         # Next.js 14 TypeScript Frontend
@@ -109,25 +111,30 @@ edaa/
 │   │   └── page.tsx                  # Master Dashboard state machine & layout coordinator
 │   │
 │   ├── components/                   # React UI Components
-│   │   ├── NavSidebar.tsx            # Leftmost navigation icons (Docs, Analytics, Settings, Theme)
-│   │   ├── DocumentSidebar.tsx       # 340px Document management list, search, status badges, upload dropzone
-│   │   ├── UploadZone.tsx            # Drag-and-drop file upload target with multi-file support
-│   │   ├── DocumentHeader.tsx        # Active document metadata bar, chunk counts, workspace view toggles
+│   │   ├── NavSidebar.tsx            # Left navigation rail (compact icon-only 64px rail on Analysis page; standard 260px sidebar on other tabs)
+│   │   ├── GlobalHeader.tsx          # Compact header on Analysis (title, dataset switcher, Engine Ready badge, icon actions, RS avatar); standard header on other tabs
+│   │   ├── analysis/                 # Pixel-Perfect Analysis Workspace Components
+│   │   │   ├── AnalysisWorkspace.tsx # Full viewport analysis workspace with centered empty state (5 suggestion chips in 2 rows) & turn cards feed
+│   │   │   ├── AnalysisTurnCard.tsx  # Turn Card with Table, Chart, SQL view toggles, Latency badge & Insight callouts
+│   │   │   └── CommandBar.tsx        # Clean fixed bottom input bar with left Sparkles icon, placeholder, paperclip attachment & Run Query button
+│   │   ├── dashboard/                # Dashboard Modular Views
+│   │   │   ├── OverviewDashboard.tsx # Master Overview with KPI cards, Recent Datasets, Activity Feed, Health Summary, Quick Start, Dropzone
+│   │   │   ├── DatasetsView.tsx      # Comprehensive dataset library management table
+│   │   │   ├── HistoryView.tsx       # Conversation analysis history archive
+│   │   │   ├── StorageView.tsx       # Local disk and vector DB storage allocation view
+│   │   │   └── SettingsView.tsx      # System hyperparameters and configuration inspector
 │   │   ├── ChatWindow.tsx            # Chat messages viewport, auto-scroll container, empty state
 │   │   ├── ChatMessage.tsx           # User/Assistant chat bubble renderer with markdown & citation chips
 │   │   ├── ChatInput.tsx             # Floating prompt input box, quick suggestions, auto-resizing
 │   │   ├── CitationsPanel.tsx        # Slide-out citation drawer with detailed evidence excerpts
 │   │   ├── CitationCard.tsx          # Grounded coordinate citation card with similarity metrics
 │   │   ├── SourceViewer.tsx          # Markdown workspace reader with coordinate markers & citation highlight
-│   │   ├── DocumentWorkspaceReader.tsx # Split workspace reader for synchronized reading
 │   │   ├── DocumentViewer.tsx        # Fullscreen Markdown preview modal dialog
-│   │   ├── ProcessingStatus.tsx      # Real-time ingestion progress stepper
-│   │   ├── EvidenceRuler.tsx         # Document navigation coordinate ruler
-│   │   └── GlobalHeader.tsx          # Top application bar with health indicators & stats
+│   │   └── ProcessingStatus.tsx      # Real-time ingestion progress stepper
 │   │
 │   └── lib/                          # Frontend Utilities & API Client
-│       ├── api.ts                    # HTTP / SSE client communicating with FastAPI backend
-│       └── types.ts                  # TypeScript interfaces (Document, ChatMessage, Citation, etc.)
+│       ├── api.ts                    # HTTP / SSE client communicating with FastAPI backend (/api/stats, /api/documents, etc.)
+│       └── types.ts                  # TypeScript interfaces (DashboardStats, Document, ChatMessage, Citation, etc.)
 │
 ├── static/                           # Legacy Vanilla JS/CSS assets (monolith fallback)
 │   ├── script.js                     # Legacy frontend client logic

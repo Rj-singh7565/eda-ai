@@ -475,13 +475,16 @@ def extract_image_ocr(image_path: str) -> List[Dict[str, Any]]:
     from PIL import Image
     import pytesseract
 
-    img = Image.open(image_path)
-    text = pytesseract.image_to_string(img).strip()
-
-    if not text:
-        text = "[OCR: No readable text detected in image.]"
-
     filename = os.path.basename(image_path)
+    try:
+        img = Image.open(image_path)
+        text = pytesseract.image_to_string(img).strip()
+        if not text:
+            text = "[OCR: No readable text detected in image.]"
+    except Exception as e:
+        print(f"[OCR WARN] Tesseract OCR extraction note: {e}")
+        text = f"[Image: {filename} uploaded. OCR text extraction requires tesseract-ocr system package.]"
+
     return [{
         "page": 1,
         "page_label": f"Image {filename}",
