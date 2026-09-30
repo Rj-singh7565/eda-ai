@@ -67,25 +67,27 @@ export default function NavSidebar({
             style={{
               width: '38px',
               height: '38px',
-              backgroundColor: '#2563eb',
-              color: '#ffffff',
               borderRadius: '10px',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              fontWeight: 700,
-              fontSize: '1rem',
-              boxShadow: '0 2px 6px rgba(37, 99, 235, 0.3)',
-              cursor: 'pointer'
+              cursor: 'pointer',
+              overflow: 'hidden',
+              transition: 'transform 0.15s ease'
             }}
             onClick={() => onTabChange('overview')}
             title="EDA Assistant"
           >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="18" y1="20" x2="18" y2="10"></line>
-              <line x1="12" y1="20" x2="12" y2="4"></line>
-              <line x1="6" y1="20" x2="6" y2="14"></line>
-            </svg>
+            <img
+              src="/logo.png"
+              alt="EDA Assistant"
+              style={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'contain',
+                display: 'block'
+              }}
+            />
           </div>
 
           {/* Navigation Icons List */}
@@ -214,11 +216,16 @@ export default function NavSidebar({
       {/* Brand Header */}
       <div className="sidebar-brand-container">
         <div className="sidebar-brand-icon">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="18" y1="20" x2="18" y2="10"></line>
-            <line x1="12" y1="20" x2="12" y2="4"></line>
-            <line x1="6" y1="20" x2="6" y2="14"></line>
-          </svg>
+          <img
+            src="/logo.png"
+            alt="EDA Assistant Logo"
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'contain',
+              display: 'block'
+            }}
+          />
         </div>
         <div>
           <div className="sidebar-brand-title">AI-Based EDA</div>

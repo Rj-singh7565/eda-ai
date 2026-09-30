@@ -4,6 +4,15 @@ import type { Metadata } from 'next';
 export const metadata: Metadata = {
   title: 'AI-Based EDA Assistant — Enterprise Workspace',
   description: 'AI Document Intelligence Engine with RAG Retrieval and Page/Slide/Row Citations',
+  icons: {
+    icon: [
+      { url: '/icon.png', sizes: '512x512', type: 'image/png' },
+      { url: '/favicon.ico', sizes: 'any' },
+    ],
+    apple: [
+      { url: '/apple-icon.png', sizes: '192x192', type: 'image/png' },
+    ],
+  },
 };
 
 export default function RootLayout({

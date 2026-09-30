@@ -240,6 +240,24 @@ def delete_document(doc_id: str) -> bool:
 
 # ── Chat History Operations ───────────────────────────────────────────
 
+def clear_chat_history(doc_id: str) -> bool:
+    """Clear all chat history records for a specific document."""
+    conn = get_db_connection()
+    try:
+        if is_postgres() and HAS_PSYCOPG2:
+            with conn.cursor() as cursor:
+                cursor.execute("DELETE FROM chat_history WHERE doc_id = %s", (doc_id,))
+                conn.commit()
+        else:
+            with conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM chat_history WHERE doc_id = ?", (doc_id,))
+                conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
 def add_chat_turn(doc_id: str, question: str, answer: str):
     """Record a Q&A exchange for a document session."""
     conn = get_db_connection()

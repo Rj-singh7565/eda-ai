@@ -110,6 +110,7 @@ export default function AnalysisWorkspace({
                 latencyMs={turn.latencyMs || (turn.streaming ? 0 : 18)}
                 dbType={dbName}
                 streaming={turn.streaming}
+                onClearChat={onClearChat}
               />
             ))}
           </div>

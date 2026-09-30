@@ -144,12 +144,20 @@ body {
 .brand-icon {
     width: 36px;
     height: 36px;
-    background: var(--accent-light);
-    color: var(--accent-primary);
+    background: transparent;
     border-radius: 10px;
     display: flex;
     align-items: center;
     justify-content: center;
+    overflow: hidden;
+}
+
+.brand-logo-img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+    filter: drop-shadow(0 2px 5px rgba(99, 102, 241, 0.28));
 }
 
 .brand-title h2 {

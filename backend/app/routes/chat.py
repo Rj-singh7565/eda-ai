@@ -60,3 +60,15 @@ async def get_document_chat_history(doc_id: str):
         raise HTTPException(status_code=404, detail="Document not found.")
     history = database.get_recent_chat_history(doc_id, limit=20)
     return {"doc_id": doc_id, "history": history}
+
+
+@router.delete("/documents/{doc_id}/history")
+@router.delete("/api/chat/{doc_id}/history")
+async def clear_document_chat_history(doc_id: str):
+    """Clear chat history records for a specific document."""
+    doc = database.get_document(doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    database.clear_chat_history(doc_id)
+    return {"status": "success", "message": "Chat history cleared successfully.", "doc_id": doc_id}
+

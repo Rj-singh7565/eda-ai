@@ -7,7 +7,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -80,6 +80,21 @@ app.include_router(health.router)
 app.include_router(upload.router)
 app.include_router(documents.router)
 app.include_router(chat.router)
+
+# Mount static files and favicon handler
+_project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+_static_dir = os.path.join(_project_root, "static")
+if os.path.exists(_static_dir):
+    app.mount("/static", StaticFiles(directory=_static_dir), name="static")
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """Direct favicon handler for browser requests."""
+    fav_file = os.path.join(_static_dir, "favicon.ico")
+    if os.path.exists(fav_file):
+        return FileResponse(fav_file)
+    return RedirectResponse(url="/static/favicon.ico")
 
 
 @app.get("/")

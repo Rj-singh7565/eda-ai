@@ -10,6 +10,7 @@ import {
   deleteDocumentRecord,
   fetchDocumentMarkdown,
   fetchChatHistory,
+  clearChatHistory,
   API_BASE
 } from '../lib/api';
 
@@ -358,6 +359,19 @@ export default function DashboardPage() {
     }
   };
 
+  const handleClearChat = async () => {
+    setMessages([]);
+    if (activeDocId) {
+      try {
+        await clearChatHistory(activeDocId);
+      } catch (err) {
+        console.warn('Backend clear history note:', err);
+      }
+    }
+    showToast('info', 'Chat history cleared.');
+  };
+
+
   // Export Modal state
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
 
@@ -510,7 +524,7 @@ export default function DashboardPage() {
               onSelectDoc={(id) => setActiveDocId(id)}
               messages={messages}
               onSendMessage={handleSendQuestion}
-              onClearChat={() => setMessages([])}
+              onClearChat={handleClearChat}
               onExportPDF={handleExportReport}
               health={health}
               isStreaming={messages.some((m) => m.streaming)}

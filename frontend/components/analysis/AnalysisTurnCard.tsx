@@ -9,7 +9,8 @@ import {
   Sparkles,
   ArrowUpDown,
   Check,
-  Copy
+  Copy,
+  Trash2
 } from 'lucide-react';
 
 interface AnalysisTurnCardProps {
@@ -19,6 +20,7 @@ interface AnalysisTurnCardProps {
   latencyMs?: number;
   dbType?: string;
   streaming?: boolean;
+  onClearChat?: () => void;
 }
 
 export default function AnalysisTurnCard({
@@ -26,8 +28,9 @@ export default function AnalysisTurnCard({
   answer,
   timestamp = 'Just now',
   latencyMs = 12,
-  dbType = 'PostgreSQL',
-  streaming = false
+  dbType = 'SQLITE',
+  streaming = false,
+  onClearChat
 }: AnalysisTurnCardProps) {
   const [viewMode, setViewMode] = useState<'table' | 'chart' | 'sql'>('table');
   const [sortCol, setSortCol] = useState<number | null>(null);
@@ -346,6 +349,17 @@ export default function AnalysisTurnCard({
             >
               <BarChart3 size={14} />
               <span>Chart</span>
+            </button>
+          )}
+
+          {onClearChat && (
+            <button
+              className="turn-toolbar-tab turn-clear-chat-tab"
+              onClick={onClearChat}
+              title="Clear entire conversation"
+            >
+              <Trash2 size={13} />
+              <span>Clear Chat</span>
             </button>
           )}
 

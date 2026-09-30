@@ -61,3 +61,16 @@ export async function fetchChatHistory(docId: string): Promise<{ history: { ques
   if (!res.ok) throw new Error('Failed to fetch chat history');
   return res.json();
 }
+
+export async function clearChatHistory(docId: string): Promise<{ status: string; message: string }> {
+  const res = await fetch(`${API_BASE}/api/chat/${docId}/history`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    const fallback = await fetch(`${API_BASE}/documents/${docId}/history`, { method: 'DELETE' });
+    if (!fallback.ok) throw new Error('Failed to clear chat history');
+    return fallback.json();
+  }
+  return res.json();
+}
+
