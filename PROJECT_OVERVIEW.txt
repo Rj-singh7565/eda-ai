@@ -1,186 +1,393 @@
 ================================================================================
           AI-BASED EDA ASSISTANT — TECHNICAL PROJECT OVERVIEW
 ================================================================================
+Version: 2.0.0 (Production-Ready)
+Scope:   Complete System Architecture, Component Catalog, Hybrid Query Engine,
+         Multi-Format Ingestion Pipeline, API Reference, and Deployment Guide
 
-1. EXECUTIVE SUMMARY & PROJECT PURPOSE
---------------------------------------
-• Purpose: Enterprise RAG (Retrieval-Augmented Generation) document intelligence system.
-• Core Goal: Analyze complex, multi-format organizational documents (financial reports, 
-  placement stats, annual filings, spreadsheets, presentations, and OCR images).
-• Key Interface Feature: Swapped workspace layout positioning the AI Chat input controls 
-  at the top and displaying clean, data-driven table answers in the main workspace pane below.
-• Output Guarantee: Strict Markdown/HTML table output with complete sanitization of internal 
-  metadata bracket labels (such as `[Sheet 'Data' (Rows 1-39) Table]`).
+================================================================================
+1. EXECUTIVE SUMMARY & CORE MISSION
+================================================================================
+• Purpose:
+  AI-Based EDA Assistant is an enterprise-grade Exploratory Data Analysis (EDA)
+  and Document Intelligence platform combining Retrieval-Augmented Generation
+  (RAG) with a deterministic DataFrame computation engine.
+
+• Dual-Engine Architecture:
+  1. Deterministic Tabular Analytics Engine (CSV & Excel):
+     Executes verified, schema-aware Pandas/NumPy operations guaranteeing 100%
+     column preservation, mathematical accuracy, and zero LLM hallucinations
+     on numerical aggregations, filtering, group-bys, and metrics.
+  2. Adaptive Document RAG Engine (PDF, Word, PPTX, Plaintext, OCR Images):
+     Performs semantic vector search over localized coordinate chunks (Page,
+     Slide, Row, Paragraph markers) with Pinecone namespace isolation and
+     token-by-token SSE streaming via Groq API models.
+
+• User Experience & Workspace Design:
+  - Full Analytics Dashboard: Master Overview with real-time KPI metrics,
+    storage allocation, data quality health scores, and live activity feeds.
+  - Dedicated Dataset Library: Complete catalog with document status tracking,
+    ingestion metrics, normalized Markdown inspection, and instant deletion.
+  - Focused Analysis Workspace: Ultra-clean 64px compact navigation rail,
+    header dataset switcher, 5 analytical prompt chips, multi-turn Turn Cards
+    with Table / Chart / SQL view toggles, latency counters, and AI insights.
+  - Sub-Document Evidence Reader: Deep-linked citations with coordinate markers,
+    side drawer evidence panel, and synchronized Markdown source reader.
+  - Multi-Format Export Engine: 1-click export of analysis turns to Markdown,
+    CSV, JSON, PNG, or PDF report formats.
+
+• Deployment & Cloud Scalability:
+  - Backend: FastAPI deployed via Docker container on Render / Railway.
+  - Frontend: Next.js 14 App Router deployed on Vercel.
+  - Dual Persistence: PostgreSQL (Supabase / Neon) for cloud production with
+    automatic schema migrations; zero-config SQLite3 for local development.
+  - Pluggable Storage: AWS S3 / Supabase Object Storage with local fallback.
 
 
-2. KEY FEATURES & CAPABILITIES
-------------------------------
-• Swapped AI Chat & Answer Layout:
-  - Top AI Chat Input Bar: Query textarea & suggested analytical chips placed at top.
-  - Main Answer Workspace: Renders clean table outputs directly below the prompt bar.
+================================================================================
+2. KEY CAPABILITIES & SYSTEM HIGHLIGHTS
+================================================================================
+• Hybrid Query Routing & Planning (`query_router.py`):
+  - Automatically classifies queries into 'STRUCTURED_DATA_OPERATION',
+    'DOCUMENT_RAG', or 'HYBRID'.
+  - Heuristic and schema-aware intent parsing: detects comparison operators,
+    mathematical keywords, aggregation verbs, and active column headers.
+  - Generates deterministic DataFrame operation plans without relying on
+    unpredictable code generation.
 
-• Strict Table Output & Data Cleanliness:
-  - Exclusive Table Response: Prompts LLM to return strictly Markdown tables.
-  - Zero Internal Noise: Filters out chunk headers, sheet names, and raw metadata.
+• Safe Deterministic DataFrame Engine (`dataset_engine.py`):
+  - In-memory DataFrame cache with file modification timestamp (`mtime`) validation.
+  - Implements operations: select, filter, sort_by, group_by, aggregations,
+    statistics (mean, median, std, min, max, count, missing).
+  - Guarantees 100% column preservation on select/filter commands.
+  - Produces pristine GitHub-flavored Markdown tables and feeds compact
+    context to Groq LLMs for concise 1-2 sentence executive insights.
 
-• Decoupled Architecture:
-  - Python FastAPI Backend: High-performance REST & SSE streaming server.
-  - Next.js 14 Frontend: Split-pane React workspace with dark/light themes.
-  - Root Compatibility Layer: Enables direct backward-compatible execution (`app.py`).
+• Multi-Format Document Ingestion Engine (`ingestion.py`, `extraction.py`):
+  - Supports 10+ file formats: PDF, DOCX, PPTX, XLSX, CSV, TXT, MD, PNG, JPG,
+    JPEG, and ZIP archives.
+  - Binary Magic-Byte Inspector: Reads binary file headers (`%PDF-`, `PK\x03\x04`,
+    `\xFF\xD8\xFF`, etc.) to reject disguised or malicious file extensions.
+  - Resilient ZIP Batch Unpacker: Validates against Zip-Slip path traversals,
+    enforces 150MB decompression limits, streams writes to disk in 64KB chunks,
+    and isolates per-file failures so healthy files process successfully.
 
-• Multi-Format Ingestion Engine:
-  - 10+ File Extensions Supported: PDF, DOCX, PPTX, XLSX, CSV, TXT, MD, PNG, JPG, ZIP.
-  - Binary Magic Byte Inspector: Verifies file headers to detect format spoofing.
-  - ZIP Batch Extractor: Unpacks and processes up to 15 documents concurrently.
+• Unified Coordinate Markdown Normalization (`normalization.py`, `chunking.py`):
+  - Standardizes all parsed inputs into canonical Markdown with coordinate comments
+    (`<!-- coordinate: page=1 -->`, `<!-- coordinate: slide=3 -->`, etc.).
+  - Preserves tabular structures intact during chunking (~600 chars, 100 overlap).
+  - Saves normalized artifacts with YAML metadata to `processed/{doc_id}.md`.
 
-• Enterprise Vector Search & RAG Pipeline:
-  - Canonical Markdown Normalization: Standardizes parsed documents into structured Markdown.
-  - Sentence & Table-Aware Chunking: Preserves data tables intact during chunking (~600 chars).
-  - Pinecone Vector Storage: Namespaced per document (`namespace=doc_id`) with score filtering (>0.35).
-  - Groq Llama 3.3 70B Streaming: Real-time token streaming via Server-Sent Events (SSE).
+• Local Vector Embeddings & Isolated Retrieval (`embeddings.py`, `retrieval.py`):
+  - Dense 384-dimensional embeddings generated locally via `BAAI/bge-small-en-v1.5`.
+  - Zero external embedding API cost or rate limits.
+  - Thread-safe model access with internal lock and CPU thread count tuning.
+  - Pinecone Serverless Index with document-level namespace isolation (`namespace=doc_id`).
+  - Score threshold filtering (>0.35) and multi-tier retrieval fallback to
+    lexical Markdown scanning if vector indexes are unavailable.
+
+• High-Speed SSE Streaming & Model Fallback Chain (`llm.py`):
+  - Token-by-token streaming over Server-Sent Events (SSE) via Groq API.
+  - Multi-candidate resilience chain: Meta Llama 3.3 70B Versatile, GPT-OSS 120b,
+    GPT-OSS 20b, Qwen 3.8 27b, Llama 3.1 8b, and Mixtral 8x7b.
+  - Automatic filtering of internal `<think>...</think>` reasoning tokens.
+  - Multi-turn conversation memory retaining recent Q&A turns per document.
 
 
+================================================================================
 3. SYSTEM ARCHITECTURE & TECH STACK
-----------------------------------
+================================================================================
 +----------------------+--------------------------------------------------------+
 | Domain / Layer       | Technologies & Libraries                               |
 +----------------------+--------------------------------------------------------+
-| Backend Framework    | Python 3.12+, FastAPI, Uvicorn, Pydantic v2, SlowAPI   |
-| Frontend Workspace   | Next.js 14, React 18, TypeScript, Vanilla CSS          |
-| Database Storage     | SQLite3 (`eda_assistant.db`) with auto schema migration|
-| Vector Store         | Pinecone Serverless Index (Cosine Similarity)          |
-| LLM Engine           | Groq API (Meta Llama 3.3 70B Versatile SSE Streaming)  |
-| Embedding Model      | SentenceTransformers (`BAAI/bge-small-en-v1.5`, 384-d) |
-| PDF Extraction       | pdfplumber (table matrix) + PyPDF (text body)          |
-| Word Extraction      | python-docx (paragraphs, tables, section boundaries)   |
-| Presentation Extraction| python-pptx (slide frames, tables, speaker notes)    |
-| Spreadsheet Parsing  | pandas + openpyxl (50-row batch Markdown tables)       |
-| Image OCR            | pytesseract + Pillow (PNG/JPG/JPEG/BMP/TIFF)           |
-| Resiliency & Retries | Tenacity Exponential Backoff                           |
-| Test Suite           | Pytest (unit & integration tests)                      |
+| Frontend Framework   | Next.js 14 (App Router), React 18, TypeScript 5        |
+| Frontend Styling     | Vanilla CSS Design System with CSS Custom Variables,   |
+|                      | Lucide React Icons, Inter typography                   |
+| Backend API Engine   | Python 3.12+, FastAPI, Uvicorn, Starlette, Pydantic v2 |
+| Rate Limiting & Flow | SlowAPI (10 uploads/min, 20 queries/min), Tenacity     |
+| Relational Storage   | PostgreSQL (`psycopg2`) for Cloud / SQLite3 for Local  |
+| Vector Database      | Pinecone Serverless Index (Cosine Similarity, 384-d)   |
+| Embedding Model      | SentenceTransformers (`BAAI/bge-small-en-v1.5`)        |
+| LLM Inference Engine | Groq API (Llama 3.3 70B, GPT-OSS 120b, Qwen 3.8 27b)   |
+| Tabular Analytics    | pandas, numpy, openpyxl                                |
+| PDF Extraction       | pdfplumber (table matrices) + PyPDF / PyPDF2 (text)    |
+| Document Extraction  | python-docx (paragraphs, tables, headings)             |
+| Presentation Parser  | python-pptx (slide frames, shapes, speaker notes)      |
+| Image OCR Parser     | pytesseract OCR engine + Pillow (PNG, JPG, BMP, TIFF)  |
+| Object Storage       | AWS S3 (`boto3`) / Supabase Storage / Local disk       |
+| Deployment Platforms | Render (Docker Web Service) & Vercel (Next.js Frontend)|
+| Automated Testing    | Pytest (6 specialized integration & unit test suites)  |
 +----------------------+--------------------------------------------------------+
 
 
+================================================================================
 4. SUPPORTED FILE FORMATS & EXTRACTION MATRIX
----------------------------------------------
-+------------+----------------+--------------------------------------------------+
-| Extension  | Document Type  | Processing Strategy                              |
-+------------+----------------+--------------------------------------------------+
-| .pdf       | PDF Document   | PyPDF text extraction + pdfplumber table matrix  |
-| .docx      | Word File      | python-docx paragraph blocks & table matrices    |
-| .pptx      | Presentation   | python-pptx slide text, tables & speaker notes   |
-| .xlsx/.xls | Spreadsheet    | pandas sheet reader into 50-row batch tables     |
-| .csv       | CSV Data       | Multi-encoding reader into Markdown tables       |
-| .txt/.log  | Plain Text     | UTF-8 / Latin-1 encoding fallback text reader    |
-| .md        | Markdown       | Direct canonical Markdown parser                 |
-| .png/.jpg  | Image          | Tesseract OCR text extraction                    |
-| .zip       | ZIP Archive    | Batch unpacking & magic byte format validation   |
-+------------+----------------+--------------------------------------------------+
+================================================================================
++------------+------------------+-----------------------------------------------+---------------------+
+| Extension  | Document Type    | Parsing Strategy                              | Coordinate Marker   |
++------------+------------------+-----------------------------------------------+---------------------+
+| .pdf       | PDF Document     | PyPDF text stream + pdfplumber table matrix   | `page=X`            |
+| .docx      | Word Document    | python-docx paragraph blocks & table matrices | `paragraph=X`       |
+| .pptx      | Presentation     | python-pptx slide text, tables & notes        | `slide=X`           |
+| .xlsx/.xls | Excel Sheet      | pandas multi-sheet reader into batch tables   | `sheet=X, rows=A-B` |
+| .csv       | CSV Dataset      | Multi-encoding robust reader into tables      | `rows=A-B`          |
+| .txt/.log  | Plaintext / Log  | UTF-8 / Latin-1 encoding fallback reader      | `line=X`            |
+| .md        | Markdown Document| Direct canonical Markdown AST parser          | `section=X`         |
+| .png/.jpg  | Scanned / Image  | Tesseract OCR text & bounding box extraction  | `image=1`           |
+| .zip       | Batch Archive    | Recursive Zip-Slip safe unpacker (<=15 files) | Inherited by file   |
++------------+------------------+-----------------------------------------------+---------------------+
 
 
-5. STEP-BY-STEP WORKING MECHANISM
-----------------------------------
-• Step 1: Upload & Format Validation
-  - User submits file or ZIP archive via frontend UploadZone.
-  - Backend verifies binary magic bytes and file size limit (<= 25MB).
+================================================================================
+5. END-TO-END DATA PROCESSING WORKFLOW
+================================================================================
+• Stage 1: Upload & Streaming Ingestion
+  - User submits file or ZIP archive via Drag-and-Drop Dropzone or File Picker.
+  - Endpoint (`POST /upload` or `POST /api/documents/upload`) streams file to disk
+    in 64KB chunks to eliminate RAM duplication.
+  - Binary magic-byte detector checks header signatures.
+  - If ZIP: unpacks with Zip-Slip path validation and dispatches per-file background tasks.
 
-• Step 2: Extraction & Markdown Normalization
-  - Format-specific extractor converts raw file into structured text blocks and tables.
-  - Normalizer builds canonical Markdown file with YAML metadata at `processed/{doc_id}.md`.
+• Stage 2: Extraction & Coordinate Normalization
+  - Format-specific extractor transforms raw file into clean text blocks & tables.
+  - Normalizer builds canonical Markdown with YAML frontmatter and coordinate tags.
+  - Normalized document is saved to `processed/{doc_id}.md` (or cloud storage).
 
-• Step 3: Chunking, Embedding & Vector Upsert
-  - Markdown text is chunked using sentence-aware splitting (~600 chars, 80 overlap).
-  - Tables are kept intact as single chunk units.
-  - `bge-small-en-v1.5` generates 384-d vectors, upserted to Pinecone under `namespace=doc_id`.
+• Stage 3: Coordinate-Aware Chunking & Embedding
+  - Document text is split into semantic chunks (~600 chars, 100 char overlap).
+  - Data tables are kept intact as dedicated tabular chunk units.
+  - `BAAI/bge-small-en-v1.5` embeds text into dense 384-dimensional vectors.
+  - Vectors are upserted to Pinecone under `namespace=doc_id` in 200-vector batches.
+  - Document status transitions from `processing` to `ready`.
 
-• Step 4: RAG Retrieval & Similarity Guard
-  - User query is embedded and searched against Pinecone index.
-  - Low-confidence matches (<0.35 similarity score) are automatically filtered out.
+• Stage 4: Query Routing & Intent Classification
+  - User submits analytical question via CommandBar or quick prompt chip.
+  - `query_router.py` inspects question against active dataset schema.
+  - Route A: Structured Dataset Operation (CSV/Excel with tabular intent).
+  - Route B: Document RAG Retrieval (PDF, Word, PPTX, or general questions).
 
-• Step 5: Clean SSE Answer Streaming & Table Rendering
-  - Excerpts are sanitized of internal `[Sheet ...]`, `[Page ...]` tags before LLM prompt assembly.
-  - Groq API streams answer strictly as a Markdown table.
-  - Frontend renders responsive HTML `<table>` elements with styled headers and borders.
-
-
-6. FILE & DIRECTORY STRUCTURE
-------------------------------
-• `backend/app/`           - Core FastAPI application package
-  - `main.py`              - App initialization, CORS, middleware, router mounts
-  - `config.py`            - System settings, environment variables, paths
-  - `database/`            - SQLite connection manager, schema models, migrations
-  - `routes/`              - Endpoint modules (`upload.py`, `documents.py`, `chat.py`, `health.py`)
-  - `services/`            - Extraction, chunking, embeddings, vector store, LLM & retrieval
-
-• `frontend/`              - Next.js 14 TypeScript web client
-  - `app/`                 - Next.js App Router (`page.tsx`, `layout.tsx`, `globals.css`)
-  - `components/`          - Modular UI (`DocumentSidebar.tsx`, `ChatWindow.tsx`, `ChatMessage.tsx`, `ChatInput.tsx`)
-  - `lib/`                 - API client (`api.ts`), type declarations (`types.ts`)
-
-• `templates/` & `static/` - Root HTML/CSS/JS interface (`index.html`, `script.js`, `style.css`)
-• `app.py`                 - Root wrapper entrypoint for backend execution
-• `tests/`                - Pytest suite (`test_pipeline.py`, `test_multi_format.py`, `test_normalization.py`)
+• Stage 5: Execution & SSE Response Streaming
+  - Route A (Structured): `dataset_engine.py` executes Pandas operations, builds
+    pristine Markdown table, creates exact citation, and streams table + AI insight.
+  - Route B (Document RAG): Vector search retrieves top-5 chunks (score > 0.35),
+    sanitizes internal bracket noise, constructs grounded prompt with chat history,
+    and streams tokens via Groq API.
+  - Turn card is updated with response, latency timer, citation chips, and view toggles.
+  - Q&A turn is persisted to database (`chat_history` table).
 
 
-7. API ENDPOINT REFERENCE
---------------------------
-+--------+----------------------------+-------------------------------------------------+
-| Method | Endpoint Path              | Purpose / Description                           |
-+--------+----------------------------+-------------------------------------------------+
-| GET    | `/health`                  | Health check status endpoint                    |
-| POST   | `/upload`                  | Upload document or ZIP archive (Rate: 10/min)   |
-| GET    | `/status/{doc_id}`         | Poll ingestion progress state                   |
-| GET    | `/documents`               | List all active uploaded documents              |
-| GET    | `/documents/{doc_id}/history`| Retrieve chat Q&A history for document        |
-| GET    | `/documents/{doc_id}/markdown`| Retrieve normalized Markdown content       |
-| DELETE | `/documents/{doc_id}`      | Delete document record, files & Pinecone vectors|
-| POST   | `/ask/stream`              | Stream answer tokens via SSE (Rate: 20/min)     |
-+--------+----------------------------+-------------------------------------------------+
+================================================================================
+6. MASTER DIRECTORY & FILE CATALOG
+================================================================================
+edaa/
+├── .env                              # Active environment variables (API keys, DB, Storage)
+├── .env.example                      # Production & local environment template
+├── .gitignore                        # Git exclusion rules
+├── AGENTS.md                         # Project design system rules & architectural constraints
+├── Dockerfile                        # Multi-stage production container setup
+├── docker-compose.yml                # Docker Compose orchestration
+├── package.json                      # Monorepo task runner (concurrently backend & frontend)
+├── package-lock.json                 # Monorepo npm lockfile
+├── requirements.txt                  # Python dependencies
+├── render.yaml                       # Render cloud deployment blueprint (Python Web Service)
+├── vercel.json                       # Vercel cloud deployment specification (Next.js)
+├── EDA_Assistant_UI_PDA.md           # UI/UX Product Design Architecture specification
+├── PDA.md                            # Core Product Design Architecture specification
+├── PROJECT_OVERVIEW.txt              # High-Level Architecture & Technical Inventory (THIS FILE)
+├── README.md                         # Quick-start manual, setup guide, and cloud deployment steps
+├── brain.md                          # Master System Brain & Comprehensive Technical Source of Truth
+├── app.py                            # Backward-compatible entrypoint -> backend.app.main:app
+├── config.py                         # Backward-compatible shim -> backend.app.config
+├── database.py                       # Backward-compatible shim -> backend.app.database.database
+├── ingestion.py                      # Backward-compatible shim -> backend.app.services.ingestion
+├── rag.py / retrieval.py             # Backward-compatible shims -> backend.app.services.retrieval
+├── eda_assistant.db                  # Local SQLite database (documents & chat history)
+│
+├── backend/                          # FastAPI Backend Application Root
+│   └── app/
+│       ├── main.py                   # FastAPI initialization, CORS, lifespan warmup, router mounts
+│       ├── config.py                 # Configuration validation, path constants, model hyperparams
+│       │
+│       ├── database/                 # Persistence Layer
+│       │   ├── database.py           # Dual PostgreSQL / SQLite CRUD engine & dashboard stats
+│       │   └── models.py             # DocumentModel & ChatTurnModel Pydantic data schemas
+│       │
+│       ├── routes/                   # HTTP & SSE API Endpoints
+│       │   ├── health.py             # Health check & system diagnostics (/health, /api/health)
+│       │   ├── upload.py             # Streaming upload, ZIP unpacker, magic byte validation
+│       │   ├── documents.py          # Document lifecycle: list, status, markdown, stats, delete
+│       │   └── chat.py               # SSE streaming Q&A, chat history retrieval & deletion
+│       │
+│       ├── schemas/                  # Pydantic Request & Response Schemas
+│       │   ├── chat.py               # QuestionStreamRequest schema
+│       │   └── document.py           # DocumentResponse, DocumentStatusResponse schemas
+│       │
+│       └── services/                 # Core Business Logic & Pipelines
+│           ├── dataset_engine.py     # Deterministic DataFrame operations (100% column preservation)
+│           ├── query_router.py       # Query intent classifier and schema-aware operation planner
+│           ├── ingestion.py          # Ingestion pipeline orchestrator & format detector
+│           ├── extraction.py         # Multi-format parsers (PDF, DOCX, PPTX, XLSX, CSV, OCR)
+│           ├── normalization.py      # Canonical Markdown conversion with coordinate comments
+│           ├── chunking.py           # Semantic coordinate-aware text chunking with overlap
+│           ├── embeddings.py         # Local HuggingFace sentence transformer (BAAI/bge-small-en-v1.5)
+│           ├── retrieval.py          # Multi-tier search (Pinecone vector -> Markdown lexical fallback)
+│           ├── llm.py                # Groq API client, model fallback chain & SSE streaming
+│           └── storage.py            # Storage abstraction layer (Local, AWS S3, Supabase Storage)
+│
+├── frontend/                         # Next.js 14 TypeScript Frontend Root
+│   ├── package.json                  # Next.js, React 18, Lucide React dependencies
+│   ├── package-lock.json             # Frontend npm lockfile
+│   ├── tsconfig.json                 # TypeScript compiler configuration
+│   ├── vercel.json                   # Frontend-specific Vercel configuration
+│   │
+│   ├── app/                          # Next.js App Router
+│   │   ├── layout.tsx                # Root layout with Inter font and HTML metadata
+│   │   ├── globals.css               # Vanilla CSS design system (tokens, themes, animations)
+│   │   └── page.tsx                  # Master Dashboard state coordinator (Overview, Analysis, etc.)
+│   │
+│   ├── components/                   # React UI Components
+│   │   ├── NavSidebar.tsx            # Left navigation rail (compact 64px rail on Analysis; 260px elsewhere)
+│   │   ├── GlobalHeader.tsx          # Responsive top bar with dataset selector & quick actions
+│   │   │
+│   │   ├── analysis/                 # Pixel-Perfect Analysis Workspace
+│   │   │   ├── AnalysisWorkspace.tsx # Multi-turn analysis feed with centered empty state chips
+│   │   │   ├── AnalysisTurnCard.tsx  # Turn card with Table/Chart/SQL toggles & insight callouts
+│   │   │   └── CommandBar.tsx        # Fixed bottom prompt input bar with run button & attachments
+│   │   │
+│   │   ├── dashboard/                # Modular Dashboard Views
+│   │   │   ├── OverviewDashboard.tsx # Master Overview with KPI cards, datasets grid, activity feed
+│   │   │   ├── DatasetsView.tsx      # Comprehensive dataset library management table
+│   │   │   ├── HistoryView.tsx       # Conversation analysis history archive
+│   │   │   ├── StorageView.tsx       # Local disk and vector DB storage allocation view
+│   │   │   └── SettingsView.tsx      # System hyperparameters and configuration inspector
+│   │   │
+│   │   ├── UploadZone.tsx            # Drag-and-drop file upload zone with format validation
+│   │   ├── CitationsPanel.tsx        # Slide-out citation drawer with detailed evidence excerpts
+│   │   ├── CitationCard.tsx          # Grounded coordinate citation card with similarity metrics
+│   │   ├── SourceViewer.tsx          # Markdown workspace reader with coordinate markers
+│   │   ├── DocumentViewer.tsx        # Fullscreen Markdown preview modal dialog
+│   │   ├── ExportModal.tsx           # Multi-format report export modal (MD, CSV, JSON, PNG, PDF)
+│   │   └── ProcessingStatus.tsx      # Real-time ingestion progress stepper
+│   │
+│   └── lib/                          # Frontend Utilities & API Client
+│       ├── api.ts                    # HTTP / SSE client communicating with FastAPI backend
+│       └── types.ts                  # TypeScript interface declarations
+│
+├── static/                           # Legacy Vanilla JS/CSS assets (monolith fallback)
+├── templates/                        # Legacy HTML single-page templates (monolith fallback)
+│
+└── tests/                            # Automated Pytest Suite
+    ├── test_pipeline.py              # End-to-end ingestion and RAG streaming tests
+    ├── test_multi_format.py          # Multi-format parser tests (PDF, DOCX, PPTX, XLSX, CSV, OCR, ZIP)
+    ├── test_normalization.py         # Markdown normalization and coordinate preservation tests
+    ├── test_structured_engine.py     # Deterministic DataFrame engine and query router tests
+    ├── test_large_dataset_pipeline.py# High-volume tabular ingestion and memory stability tests
+    └── test_zip_large_upload.py      # ZIP batch extraction, Zip-Slip security and quota tests
 
 
-8. HOW TO RUN THE PROJECT & LIVE PORT STATUS
----------------------------------------------
-• Active Server Status:
-  - Backend Server: RUNNING on http://localhost:8000 (Python app.py via Uvicorn)
-  - Frontend Workspace: RUNNING on http://localhost:3000 (Next.js Dev Server)
-
-• Execution Commands:
-  - Run Both Servers Concurrently:
-    npm run dev
-
-  - Run FastAPI Backend Independently:
-    venv\Scripts\python.exe app.py
-
-  - Run Next.js Frontend Independently:
-    cd frontend
-    npm run dev
-
-  - Run Automated Pytest Suite:
-    venv\Scripts\python.exe -m pytest
-
-• Application Access URLs:
-  - Next.js Workspace: http://localhost:3000
-  - FastAPI Backend / Swagger Docs: http://localhost:8000/docs
+================================================================================
+7. REST & STREAMING API ENDPOINT REFERENCE
+================================================================================
++--------+------------------------------------+-----------------------------------------------------+
+| Method | Endpoint Path                      | Purpose / Description                               |
++--------+------------------------------------+-----------------------------------------------------+
+| GET    | `/health` / `/api/health`          | System health check & vector engine status          |
+| POST   | `/upload` / `/api/documents/upload`| Upload file or ZIP archive (Rate: 10/min)           |
+| GET    | `/documents` / `/api/documents`    | List all registered documents & ingestion statuses  |
+| GET    | `/stats` / `/api/stats`            | Aggregated system metrics, KPI cards & activity feed|
+| GET    | `/status/{doc_id}`                 | Poll ingestion status for a specific document       |
+| GET    | `/documents/{doc_id}`              | Retrieve single document metadata record            |
+| GET    | `/documents/{doc_id}/markdown`     | Retrieve raw normalized Markdown representation     |
+| DELETE | `/documents/{doc_id}`              | Delete document, stored files & Pinecone vectors    |
+| POST   | `/ask/stream` / `/api/chat/stream` | Stream Q&A answer tokens via SSE (Rate: 20/min)     |
+| GET    | `/documents/{doc_id}/history`      | Retrieve chat history turns for a document session  |
+| DELETE | `/documents/{doc_id}/history`      | Clear chat history records for a document session   |
++--------+------------------------------------+-----------------------------------------------------+
 
 
-9. SYSTEM CONFIGURATION PARAMETERS
------------------------------------
-+-------------------------+----------------------+------------------------------------+
-| Parameter               | Default Value        | Purpose / Description              |
-+-------------------------+----------------------+------------------------------------+
-| EMBEDDING_MODEL         | BAAI/bge-small-en-v1.5| SentenceTransformer embedding model|
-| EMBEDDING_DIMENSION     | 384                  | Dense vector embedding dimension   |
-| LLM_MODEL               | openai/gpt-oss-120b  | Groq primary LLM inference model   |
-| CHUNK_SIZE              | 600                  | Target characters per text chunk   |
-| CHUNK_OVERLAP           | 100                  | Overlap character count            |
-| TOP_K                   | 5                    | Vector chunks retrieved per query  |
-| SIMILARITY_THRESHOLD    | 0.35                 | Minimum score threshold to keep    |
-| MAX_FILE_SIZE_MB        | 25                   | Maximum file size limit (MB)       |
-| MAX_ZIP_FILES           | 15                   | Max files per ZIP archive          |
-| MEMORY_TURNS            | 4                    | Session chat turns retained        |
-| PINECONE_INDEX_NAME     | eda-assistant        | Target Pinecone serverless index   |
-| STORAGE_TYPE            | local                | Storage driver (local/s3/supabase) |
-| EMBEDDING_CACHE_LIMIT   | 10000                | SHA-256 LRU vector cache entries   |
-| UPSERT_BATCH_SIZE       | 200                  | Vectors per Pinecone bulk upsert   |
-+-------------------------+----------------------+------------------------------------+
+================================================================================
+8. CONFIGURATION PARAMETERS & ENVIRONMENT MATRIX
+================================================================================
++-------------------------+----------------------+-------------+------------------------------------+
+| Parameter Name          | Default Value        | Required    | Description                        |
++-------------------------+----------------------+-------------+------------------------------------+
+| GROQ_API_KEY            | -                    | YES         | Groq API key for LLM streaming     |
+| PINECONE_API_KEY        | -                    | YES         | Pinecone API key for vector storage|
+| PINECONE_INDEX_NAME     | eda-assistant        | YES         | Target Pinecone serverless index   |
+| DATABASE_URL            | None (uses SQLite)   | OPTIONAL    | PostgreSQL connection string       |
+| STORAGE_TYPE            | local                | OPTIONAL    | Storage driver: local, s3, supabase|
+| S3_BUCKET               | None                 | OPTIONAL    | AWS S3 bucket name                 |
+| S3_ENDPOINT_URL         | None                 | OPTIONAL    | Custom S3 compatible endpoint URL  |
+| AWS_ACCESS_KEY_ID       | None                 | OPTIONAL    | AWS S3 access key ID               |
+| AWS_SECRET_ACCESS_KEY   | None                 | OPTIONAL    | AWS S3 secret access key           |
+| SUPABASE_URL            | None                 | OPTIONAL    | Supabase project URL               |
+| SUPABASE_KEY            | None                 | OPTIONAL    | Supabase service role key          |
+| SUPABASE_STORAGE_BUCKET | documents            | OPTIONAL    | Supabase Storage bucket name       |
+| FRONTEND_URL            | None                 | OPTIONAL    | Production frontend URL for CORS   |
+| CORS_ORIGINS            | None                 | OPTIONAL    | Comma-separated allowed origins    |
+| EMBEDDING_MODEL         | BAAI/bge-small-en-v1.5| OPTIONAL    | HuggingFace embedding model ID     |
+| EMBEDDING_DIMENSION     | 384                  | OPTIONAL    | Dense vector embedding dimension   |
+| LLM_MODEL               | openai/gpt-oss-120b  | OPTIONAL    | Primary Groq LLM inference model   |
+| CHUNK_SIZE              | 600                  | OPTIONAL    | Target characters per text chunk   |
+| CHUNK_OVERLAP           | 100                  | OPTIONAL    | Overlap character count per chunk  |
+| TOP_K                   | 5                    | OPTIONAL    | Vector chunks retrieved per query  |
+| SIMILARITY_THRESHOLD    | 0.35                 | OPTIONAL    | Minimum cosine score threshold     |
+| MAX_FILE_SIZE_MB        | 25                   | OPTIONAL    | Max file size upload limit (MB)    |
+| MAX_ZIP_FILES           | 15                   | OPTIONAL    | Max files extracted per ZIP archive|
+| MEMORY_TURNS            | 4                    | OPTIONAL    | Conversation history turns retained|
++-------------------------+----------------------+-------------+------------------------------------+
+
+
+================================================================================
+9. EXECUTION, LOCAL DEVELOPMENT & DEPLOYMENT RUNBOOK
+================================================================================
+• Local Development Quick Start:
+  1. Prerequisites:
+     - Python 3.12+ installed
+     - Node.js 18+ and npm installed
+     - Tesseract OCR (optional, for image OCR)
+
+  2. Install Backend & Frontend Dependencies:
+     pip install -r requirements.txt
+     npm install
+     cd frontend && npm install && cd ..
+
+  3. Configure Environment Variables:
+     Copy `.env.example` to `.env` and provide your `GROQ_API_KEY` and
+     `PINECONE_API_KEY`.
+
+  4. Run Both Servers Concurrently:
+     npm run dev
+     - Next.js Workspace:   http://localhost:3000
+     - FastAPI Backend:     http://localhost:8000
+     - Interactive Swagger: http://localhost:8000/docs
+
+  5. Run Backend Independently:
+     python app.py
+
+  6. Run Frontend Independently:
+     cd frontend
+     npm run dev
+
+  7. Run Automated Pytest Suite:
+     python -m pytest
+
+• Cloud Production Deployment:
+  1. Backend Deployment on Render (`render.yaml`):
+     - Link repository to Render as a Web Service.
+     - Select Docker environment (or Python runtime with `pip install -r requirements.txt`).
+     - Configure environment variables (`GROQ_API_KEY`, `PINECONE_API_KEY`,
+       `DATABASE_URL`, `STORAGE_TYPE`, `FRONTEND_URL`).
+     - Backend auto-provisions on port `$PORT`.
+
+  2. Frontend Deployment on Vercel (`vercel.json`):
+     - Import repository to Vercel.
+     - Root install command: `npm install && cd frontend && npm install`
+     - Build command: `cd frontend && npm run build`
+     - Output directory: `frontend/.next`
+     - Set environment variable: `NEXT_PUBLIC_API_URL=https://your-backend.onrender.com`
+     - Deploy service.
+
+================================================================================
+                 END OF TECHNICAL PROJECT OVERVIEW
 ================================================================================
