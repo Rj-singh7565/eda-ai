@@ -3,6 +3,13 @@ Root Application Wrapper — Delegates to backend/app/main.py for full backward 
 """
 
 import os
+import sys
+
+# Ensure local venv packages are accessible if started with global Python
+_venv_site = os.path.join(os.path.dirname(__file__), "venv", "Lib", "site-packages")
+if os.path.exists(_venv_site) and _venv_site not in sys.path:
+    sys.path.insert(0, _venv_site)
+
 from backend.app.main import app
 
 if __name__ == "__main__":

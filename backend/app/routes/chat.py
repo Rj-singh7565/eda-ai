@@ -41,7 +41,7 @@ async def ask_question_stream(request: Request, payload: QuestionStreamRequest):
         )
 
     return StreamingResponse(
-        llm.generate_answer_stream(doc_id, question),
+        llm.generate_answer_stream(doc_id, question, request=request),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",

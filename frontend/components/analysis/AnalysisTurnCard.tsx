@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   Table as TableIcon,
   BarChart3,
@@ -36,6 +37,18 @@ export default function AnalysisTurnCard({
   const [sortCol, setSortCol] = useState<number | null>(null);
   const [sortAsc, setSortAsc] = useState(true);
   const [copied, setCopied] = useState(false);
+  const [liveStopwatch, setLiveStopwatch] = useState(0);
+
+  const tableContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!streaming) return;
+    const start = Date.now();
+    const interval = setInterval(() => {
+      setLiveStopwatch(Date.now() - start);
+    }, 50);
+    return () => clearInterval(interval);
+  }, [streaming]);
 
   // Dynamic table and insight parser from real assistant answer
   const parsedData = useMemo(() => {
@@ -195,6 +208,16 @@ export default function AnalysisTurnCard({
     });
   }, [parsedData.rows, sortCol, sortAsc]);
 
+  const shouldVirtualize = sortedRows.length > 100;
+
+  const rowVirtualizer = useVirtualizer({
+    count: sortedRows.length,
+    getScrollElement: () => tableContainerRef.current,
+    estimateSize: () => 37,
+    overscan: 10,
+    enabled: shouldVirtualize
+  });
+
   const handleSort = (colIdx: number) => {
     if (sortCol === colIdx) {
       setSortAsc(!sortAsc);
@@ -319,8 +342,8 @@ export default function AnalysisTurnCard({
               <span>{timestamp}</span>
               <span className="turn-meta-bullet">•</span>
               <span className="turn-latency-indicator">
-                <span className="turn-green-dot"></span>
-                {latencyMs}ms ({dbType})
+                <span className={`turn-green-dot ${streaming ? 'pulse' : ''}`}></span>
+                {streaming ? `${Math.round(liveStopwatch)}ms (processing...)` : `${latencyMs}ms (${dbType})`}
               </span>
               <span className="turn-meta-bullet">•</span>
               <span style={{ color: '#64748b', fontWeight: 500 }}>
@@ -500,45 +523,110 @@ export default function AnalysisTurnCard({
       <div className="turn-card-content-area">
         {/* VIEW 1: STRUCTURED DATA TABLE */}
         {viewMode === 'table' && (
-          <div className="turn-table-responsive-container" style={{ overflowX: 'auto', width: '100%', maxWidth: '100%', WebkitOverflowScrolling: 'touch' }}>
-            <table className="turn-data-table" style={{ width: '100%', minWidth: 'max-content', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr>
-                  <th style={{ width: '44px', textAlign: 'center', whiteSpace: 'nowrap' }}>#</th>
-                  {parsedData.headers.map((h, hIdx) => (
-                    <th
-                      key={hIdx}
-                      onClick={() => handleSort(hIdx)}
-                      className="turn-sortable-th"
-                      style={{ whiteSpace: 'nowrap' }}
-                    >
-                      <div className="th-sort-wrapper">
-                        <span>{h}</span>
-                        <ArrowUpDown size={12} className="th-sort-icon" />
-                      </div>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {sortedRows.map((row, rIdx) => (
-                  <tr key={rIdx} className="turn-table-row">
-                    <td style={{ textAlign: 'center', color: '#94a3b8', fontSize: '0.78rem', whiteSpace: 'nowrap' }}>
-                      {rIdx + 1}
-                    </td>
-                    {row.map((cell, cIdx) => (
-                      <td
-                        key={cIdx}
-                        className={cIdx > 0 ? 'turn-metric-cell' : 'turn-label-cell'}
+          <div
+            ref={tableContainerRef}
+            className="turn-table-responsive-container"
+            style={{
+              overflowX: 'auto',
+              maxHeight: shouldVirtualize ? '540px' : undefined,
+              overflowY: shouldVirtualize ? 'auto' : undefined,
+              width: '100%',
+              maxWidth: '100%',
+              WebkitOverflowScrolling: 'touch'
+            }}
+          >
+            {streaming && (!answer || !answer.trim()) ? (
+              <div style={{ padding: '24px 20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#4f46e5', fontSize: '0.85rem', fontWeight: 600 }}>
+                  <Sparkles size={16} />
+                  <span>Executing sub-second analytical query...</span>
+                </div>
+                <div style={{ height: '22px', width: '92%', background: '#e2e8f0', borderRadius: '6px' }} />
+                <div style={{ height: '18px', width: '78%', background: '#f1f5f9', borderRadius: '6px' }} />
+                <div style={{ height: '18px', width: '64%', background: '#f1f5f9', borderRadius: '6px' }} />
+              </div>
+            ) : (
+              <table className="turn-data-table" style={{ width: '100%', minWidth: 'max-content', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ position: shouldVirtualize ? 'sticky' : undefined, top: 0, zIndex: 2, background: '#f8fafc' }}>
+                    <th style={{ width: '44px', textAlign: 'center', whiteSpace: 'nowrap' }}>#</th>
+                    {parsedData.headers.map((h, hIdx) => (
+                      <th
+                        key={hIdx}
+                        onClick={() => handleSort(hIdx)}
+                        className="turn-sortable-th"
                         style={{ whiteSpace: 'nowrap' }}
                       >
-                        {cell}
-                      </td>
+                        <div className="th-sort-wrapper">
+                          <span>{h}</span>
+                          <ArrowUpDown size={12} className="th-sort-icon" />
+                        </div>
+                      </th>
                     ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {shouldVirtualize ? (
+                    <>
+                      {rowVirtualizer.getVirtualItems().length > 0 && (
+                        <tr style={{ height: `${rowVirtualizer.getVirtualItems()[0].start}px` }}>
+                          <td colSpan={parsedData.headers.length + 1} style={{ padding: 0, border: 'none' }} />
+                        </tr>
+                      )}
+                      {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                        const row = sortedRows[virtualRow.index];
+                        const rIdx = virtualRow.index;
+                        return (
+                          <tr key={virtualRow.key || rIdx} className="turn-table-row">
+                            <td style={{ textAlign: 'center', color: '#94a3b8', fontSize: '0.78rem', whiteSpace: 'nowrap' }}>
+                              {rIdx + 1}
+                            </td>
+                            {row.map((cell, cIdx) => (
+                              <td
+                                key={cIdx}
+                                className={cIdx > 0 ? 'turn-metric-cell' : 'turn-label-cell'}
+                                style={{ whiteSpace: 'nowrap' }}
+                              >
+                                {cell}
+                              </td>
+                            ))}
+                          </tr>
+                        );
+                      })}
+                      {rowVirtualizer.getVirtualItems().length > 0 && (
+                        <tr
+                          style={{
+                            height: `${
+                              rowVirtualizer.getTotalSize() -
+                              rowVirtualizer.getVirtualItems()[rowVirtualizer.getVirtualItems().length - 1].end
+                            }px`
+                          }}
+                        >
+                          <td colSpan={parsedData.headers.length + 1} style={{ padding: 0, border: 'none' }} />
+                        </tr>
+                      )}
+                    </>
+                  ) : (
+                    sortedRows.map((row, rIdx) => (
+                      <tr key={rIdx} className="turn-table-row">
+                        <td style={{ textAlign: 'center', color: '#94a3b8', fontSize: '0.78rem', whiteSpace: 'nowrap' }}>
+                          {rIdx + 1}
+                        </td>
+                        {row.map((cell, cIdx) => (
+                          <td
+                            key={cIdx}
+                            className={cIdx > 0 ? 'turn-metric-cell' : 'turn-label-cell'}
+                            style={{ whiteSpace: 'nowrap' }}
+                          >
+                            {cell}
+                          </td>
+                        ))}
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            )}
           </div>
         )}
 

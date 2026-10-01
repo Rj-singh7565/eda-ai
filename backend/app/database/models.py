@@ -16,6 +16,8 @@ class DocumentModel:
         status: str = "processing",
         error_message: Optional[str] = None,
         markdown_path: Optional[str] = None,
+        parquet_path: Optional[str] = None,
+        dataset_metadata: Optional[Dict[str, Any]] = None,
         created_at: Optional[str] = None
     ):
         self.doc_id = doc_id
@@ -27,6 +29,8 @@ class DocumentModel:
         self.status = status
         self.error_message = error_message
         self.markdown_path = markdown_path
+        self.parquet_path = parquet_path
+        self.dataset_metadata = dataset_metadata
         self.created_at = created_at
 
     def to_dict(self) -> Dict[str, Any]:
@@ -40,5 +44,7 @@ class DocumentModel:
             "status": self.status,
             "error_message": self.error_message,
             "markdown_path": self.markdown_path,
+            "parquet_path": self.parquet_path,
+            "dataset_metadata": self.dataset_metadata,
             "created_at": str(self.created_at) if self.created_at else None
         }

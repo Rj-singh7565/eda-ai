@@ -6,6 +6,7 @@ Lexical/Keyword Fallback, and Table-Aware Context Assembly.
 import re
 import logging
 from typing import List, Dict, Any, Optional
+import threading
 from tenacity import retry, stop_after_attempt, wait_exponential
 from pinecone import Pinecone
 
@@ -13,11 +14,14 @@ from backend.app import config
 from backend.app.database import database
 from backend.app.services import embeddings
 from backend.app.services.storage import storage_service
+from backend.app.services.cache import semantic_cache
 
 logger = logging.getLogger("eda.retrieval")
 logging.basicConfig(level=logging.INFO)
 
 _pinecone_index = None
+_pinecone_semaphore = threading.BoundedSemaphore(config.EDA_MAX_PINECONE_CONCURRENCY)
+_retrieval_semaphore = threading.BoundedSemaphore(config.EDA_MAX_RETRIEVAL_CONCURRENCY)
 
 
 def get_pinecone_index():
@@ -35,14 +39,15 @@ def get_pinecone_index():
     reraise=True
 )
 def query_pinecone_namespace(query_vector: List[float], doc_id: str, top_k: int = config.TOP_K):
-    """Query Pinecone vector database under namespace=doc_id with automatic retries."""
-    index = get_pinecone_index()
-    return index.query(
-        vector=query_vector,
-        top_k=top_k,
-        namespace=doc_id,
-        include_metadata=True
-    )
+    """Query Pinecone vector database under namespace=doc_id with automatic retries and bounded concurrency."""
+    with _pinecone_semaphore:
+        index = get_pinecone_index()
+        return index.query(
+            vector=query_vector,
+            top_k=top_k,
+            namespace=doc_id,
+            include_metadata=True
+        )
 
 
 def _lexical_search_markdown(raw_md: str, question: str, top_sections: int = 3) -> List[Dict[str, Any]]:
@@ -92,108 +97,131 @@ def _lexical_search_markdown(raw_md: str, question: str, top_sections: int = 3) 
 
 def retrieve_chunks(doc_id: str, question: str) -> List[Dict[str, Any]]:
     """
-    Adaptive Multi-Tier Retrieval:
-    1. Tier 1: Dense Vector Similarity Search in Pinecone with namespace=doc_id.
-    2. Tier 2: Adaptive Threshold Relaxation (if initial matches < 2).
-    3. Tier 3: Lexical / Keyword Search over full canonical Markdown.
-    4. Tier 4: Structured Dataset Direct Inspection (for CSV/Excel).
+    Adaptive Multi-Tier Retrieval with Semantic Caching and Concurrency Bounding:
+    1. Cache Check: Instant exact match (<0.1ms).
+    2. Vector Embedding & Cache Check: Semantic match (>= 0.96 similarity).
+    3. Tier 1: Dense Vector Similarity Search in Pinecone with namespace=doc_id.
+    4. Tier 2: Adaptive Threshold Relaxation (if initial matches < 2).
+    5. Tier 3: Lexical / Keyword Search over full canonical Markdown.
     """
-    retrieved_chunks: List[Dict[str, Any]] = []
-    seen_texts = set()
+    # Fast path: Exact Query Match Cache (<0.1ms)
+    cached_exact = semantic_cache.get(doc_id, question, engine="DOCUMENT_RAG")
+    if cached_exact is not None:
+        logger.info(f"[RETRIEVAL CACHE HIT] doc_id={doc_id} exact hit on query='{question[:40]}'")
+        return cached_exact[0]
 
-    strategy_log = {"doc_id": doc_id, "tiers_executed": [], "matches_per_tier": {}}
+    with _retrieval_semaphore:
+        # Re-check exact cache in case another thread populated it while waiting for semaphore
+        cached_exact = semantic_cache.get(doc_id, question, engine="DOCUMENT_RAG")
+        if cached_exact is not None:
+            return cached_exact[0]
 
-    # ── Tier 1: Standard Dense Vector Retrieval ──────────────────────────────
-    try:
+        retrieved_chunks: List[Dict[str, Any]] = []
+        seen_texts = set()
+
+        strategy_log = {"doc_id": doc_id, "tiers_executed": [], "matches_per_tier": {}}
+
+        # Compute query vector
         embedder = embeddings.get_embedding_model()
         q_vector = embedder.encode([question], normalize_embeddings=True)[0].tolist()
 
-        strategy_log["tiers_executed"].append("dense_vector_primary")
-        response = query_pinecone_namespace(q_vector, doc_id, top_k=config.TOP_K)
-        matches = response.get("matches", [])
-        strategy_log["matches_per_tier"]["tier1_candidates"] = len(matches)
+        # Semantic Vector Cache Check
+        cached_semantic = semantic_cache.get(doc_id, question, engine="DOCUMENT_RAG", query_vector=q_vector)
+        if cached_semantic is not None:
+            logger.info(f"[RETRIEVAL CACHE HIT: SEMANTIC] doc_id={doc_id} for query='{question[:40]}'")
+            return cached_semantic[0]
 
-        for m in matches:
-            score = m.get("score", 0.0)
-            metadata = m.get("metadata", {})
-            text = metadata.get("text", "").strip()
-
-            if score >= config.SIMILARITY_THRESHOLD and text:
-                text_key = re.sub(r"\s+", " ", text[:150])
-                if text_key not in seen_texts:
-                    seen_texts.add(text_key)
-                    raw_pages = metadata.get("pages", [])
-                    pages = [f"Page {p}" if str(p).isdigit() else str(p) for p in raw_pages]
-
-                    retrieved_chunks.append({
-                        "text": text,
-                        "pages": sorted(list(set(pages))) if pages else ["Section 1"],
-                        "score": round(score, 4),
-                        "is_table": metadata.get("is_table", False)
-                    })
-
-        strategy_log["matches_per_tier"]["tier1_accepted"] = len(retrieved_chunks)
-
-    except Exception as pe:
-        logger.warning(f"Pinecone vector retrieval note for doc {doc_id}: {pe}")
-        matches = []
-
-    # ── Tier 2: Adaptive Threshold Relaxation (if matches are insufficient) ──
-    if len(retrieved_chunks) < 2 and matches:
-        strategy_log["tiers_executed"].append("adaptive_threshold_relaxation")
-        relaxed_threshold = max(0.20, config.SIMILARITY_THRESHOLD - 0.15)
-
-        for m in matches:
-            score = m.get("score", 0.0)
-            metadata = m.get("metadata", {})
-            text = metadata.get("text", "").strip()
-
-            if score >= relaxed_threshold and text:
-                text_key = re.sub(r"\s+", " ", text[:150])
-                if text_key not in seen_texts:
-                    seen_texts.add(text_key)
-                    raw_pages = metadata.get("pages", [])
-                    pages = [f"Page {p}" if str(p).isdigit() else str(p) for p in raw_pages]
-
-                    retrieved_chunks.append({
-                        "text": text,
-                        "pages": sorted(list(set(pages))) if pages else ["Section 1"],
-                        "score": round(score, 4),
-                        "is_table": metadata.get("is_table", False)
-                    })
-
-        strategy_log["matches_per_tier"]["tier2_accepted"] = len(retrieved_chunks)
-
-    # ── Tier 3: Lexical / Keyword Search Fallback ─────────────────────────────
-    if len(retrieved_chunks) < 2:
+        # ── Tier 1: Standard Dense Vector Retrieval ──────────────────────────────
         try:
-            strategy_log["tiers_executed"].append("lexical_markdown_search")
-            doc = database.get_document(doc_id)
-            md_path = doc.get("markdown_path") if doc else None
-            raw_md = storage_service.read_processed_markdown(doc_id, md_path)
+            strategy_log["tiers_executed"].append("dense_vector_primary")
+            response = query_pinecone_namespace(q_vector, doc_id, top_k=config.TOP_K)
+            matches = response.get("matches", [])
+            strategy_log["matches_per_tier"]["tier1_candidates"] = len(matches)
 
-            if raw_md:
-                lexical_matches = _lexical_search_markdown(raw_md, question, top_sections=3)
-                for lm in lexical_matches:
-                    text_key = re.sub(r"\s+", " ", lm["text"][:150])
+            for m in matches:
+                score = m.get("score", 0.0)
+                metadata = m.get("metadata", {})
+                text = metadata.get("text", "").strip()
+
+                if score >= config.SIMILARITY_THRESHOLD and text:
+                    text_key = re.sub(r"\s+", " ", text[:150])
                     if text_key not in seen_texts:
                         seen_texts.add(text_key)
-                        retrieved_chunks.append(lm)
+                        raw_pages = metadata.get("pages", [])
+                        pages = [f"Page {p}" if str(p).isdigit() else str(p) for p in raw_pages]
 
-                strategy_log["matches_per_tier"]["tier3_lexical_accepted"] = len(lexical_matches)
+                        retrieved_chunks.append({
+                            "text": text,
+                            "pages": sorted(list(set(pages))) if pages else ["Section 1"],
+                            "score": round(score, 4),
+                            "is_table": metadata.get("is_table", False)
+                        })
 
-                # Fallback: If still empty, provide the document's header / overview section
-                if not retrieved_chunks:
-                    retrieved_chunks.append({
-                        "text": raw_md[:3500],
-                        "pages": ["Overview / Document Content"],
-                        "score": 0.85,
-                        "is_table": "|" in raw_md
-                    })
-        except Exception as fe:
-            logger.warning(f"Lexical markdown fallback error for doc {doc_id}: {fe}")
+            strategy_log["matches_per_tier"]["tier1_accepted"] = len(retrieved_chunks)
 
-    # Log structured observability telemetry
-    logger.info(f"[RETRIEVAL TELEMETRY] doc_id={doc_id} query='{question[:40]}' final_chunks={len(retrieved_chunks)} strategies={strategy_log['tiers_executed']}")
+        except Exception as pe:
+            logger.warning(f"Pinecone vector retrieval note for doc {doc_id}: {pe}")
+            matches = []
 
-    return retrieved_chunks
+        # ── Tier 2: Adaptive Threshold Relaxation (if matches are insufficient) ──
+        if len(retrieved_chunks) < 2 and matches:
+            strategy_log["tiers_executed"].append("adaptive_threshold_relaxation")
+            relaxed_threshold = max(0.20, config.SIMILARITY_THRESHOLD - 0.15)
+
+            for m in matches:
+                score = m.get("score", 0.0)
+                metadata = m.get("metadata", {})
+                text = metadata.get("text", "").strip()
+
+                if score >= relaxed_threshold and text:
+                    text_key = re.sub(r"\s+", " ", text[:150])
+                    if text_key not in seen_texts:
+                        seen_texts.add(text_key)
+                        raw_pages = metadata.get("pages", [])
+                        pages = [f"Page {p}" if str(p).isdigit() else str(p) for p in raw_pages]
+
+                        retrieved_chunks.append({
+                            "text": text,
+                            "pages": sorted(list(set(pages))) if pages else ["Section 1"],
+                            "score": round(score, 4),
+                            "is_table": metadata.get("is_table", False)
+                        })
+
+            strategy_log["matches_per_tier"]["tier2_accepted"] = len(retrieved_chunks)
+
+        # ── Tier 3: Lexical / Keyword Search Fallback ─────────────────────────────
+        if len(retrieved_chunks) < 2:
+            try:
+                strategy_log["tiers_executed"].append("lexical_markdown_search")
+                doc = database.get_document(doc_id)
+                md_path = doc.get("markdown_path") if doc else None
+                raw_md = storage_service.read_processed_markdown(doc_id, md_path)
+
+                if raw_md:
+                    lexical_matches = _lexical_search_markdown(raw_md, question, top_sections=3)
+                    for lm in lexical_matches:
+                        text_key = re.sub(r"\s+", " ", lm["text"][:150])
+                        if text_key not in seen_texts:
+                            seen_texts.add(text_key)
+                            retrieved_chunks.append(lm)
+
+                    strategy_log["matches_per_tier"]["tier3_lexical_accepted"] = len(lexical_matches)
+
+                    # Fallback: If still empty, provide the document's header / overview section
+                    if not retrieved_chunks:
+                        retrieved_chunks.append({
+                            "text": raw_md[:3500],
+                            "pages": ["Overview / Document Content"],
+                            "score": 0.85,
+                            "is_table": "|" in raw_md
+                        })
+            except Exception as fe:
+                logger.warning(f"Lexical markdown fallback error for doc {doc_id}: {fe}")
+
+        if retrieved_chunks:
+            semantic_cache.set(doc_id, question, retrieved_chunks, engine="DOCUMENT_RAG", query_vector=q_vector)
+
+        # Log structured observability telemetry
+        logger.info(f"[RETRIEVAL TELEMETRY] doc_id={doc_id} query='{question[:40]}' final_chunks={len(retrieved_chunks)} strategies={strategy_log['tiers_executed']}")
+
+        return retrieved_chunks

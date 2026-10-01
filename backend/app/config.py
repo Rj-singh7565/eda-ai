@@ -50,6 +50,29 @@ CHUNK_OVERLAP = 100    # Overlap between chunks
 TOP_K = 5              # Number of chunks retrieved per query
 SIMILARITY_THRESHOLD = 0.35 # Score threshold below which context is ignored
 
+# ── Performance Optimization Parameters ───────────────────────────────
+PARQUET_COMPRESSION = os.getenv("PARQUET_COMPRESSION", "snappy")
+DUCKDB_THREADS = int(os.getenv("DUCKDB_THREADS", "0"))  # 0 = auto-detect all cores
+SIMILARITY_CACHE_THRESHOLD = float(os.getenv("SIMILARITY_CACHE_THRESHOLD", "0.96"))
+SEMANTIC_CACHE_MAX_ENTRIES = int(os.getenv("SEMANTIC_CACHE_MAX_ENTRIES", "500"))
+MAX_RAG_CONTEXT_TOKENS = int(os.getenv("MAX_RAG_CONTEXT_TOKENS", "1200"))
+PROMPT_MAX_CONTEXT_TOKENS = int(os.getenv("PROMPT_MAX_CONTEXT_TOKENS", "400"))
+RAG_TOP_K_CHUNKS = int(os.getenv("RAG_TOP_K_CHUNKS", "5"))
+PINECONE_UPSERT_BATCH_SIZE = int(os.getenv("PINECONE_UPSERT_BATCH_SIZE", "250"))
+
+# ── Bounded Concurrency & Semaphores ──────────────────────────────────
+EDA_MAX_INGESTION_WORKERS = int(os.getenv("EDA_MAX_INGESTION_WORKERS", "4"))
+EDA_MAX_OCR_CONCURRENCY = int(os.getenv("EDA_MAX_OCR_CONCURRENCY", "2"))
+EDA_MAX_EMBEDDING_CONCURRENCY = int(os.getenv("EDA_MAX_EMBEDDING_CONCURRENCY", "2"))
+EDA_MAX_PINECONE_CONCURRENCY = int(os.getenv("EDA_MAX_PINECONE_CONCURRENCY", "4"))
+EDA_MAX_RETRIEVAL_CONCURRENCY = int(os.getenv("EDA_MAX_RETRIEVAL_CONCURRENCY", "4"))
+EDA_MAX_DUCKDB_CONCURRENCY = int(os.getenv("EDA_MAX_DUCKDB_CONCURRENCY", "8"))
+
+# ── Database Connection Pooling ───────────────────────────────────────
+DB_POOL_SIZE = int(os.getenv("DB_POOL_SIZE", "20"))
+DB_MAX_OVERFLOW = int(os.getenv("DB_MAX_OVERFLOW", "10"))
+DB_POOL_TIMEOUT = int(os.getenv("DB_POOL_TIMEOUT", "30"))
+
 # ── Constraints & Memory ──────────────────────────────────────────────
 MAX_FILE_SIZE_MB = 25
 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024

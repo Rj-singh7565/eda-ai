@@ -46,6 +46,8 @@ export interface ChatMessage {
   citations?: Citation[];
   streaming?: boolean;
   latencyMs?: number;
+  tableMarkdown?: string;
+  sqlQuery?: string;
 }
 
 export interface SkippedFile {

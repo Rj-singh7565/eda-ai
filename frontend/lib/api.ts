@@ -74,3 +74,102 @@ export async function clearChatHistory(docId: string): Promise<{ status: string;
   return res.json();
 }
 
+export interface SSEEventHandlers {
+  onTableReady?: (data: {
+    table_markdown: string;
+    sql_query?: string;
+    latency_ms?: number;
+    row_count?: number;
+    column_count?: number;
+  }) => void;
+  onMetadata?: (data: { citations: any[]; has_context: boolean }) => void;
+  onCitation?: (data: { citations: any[] }) => void;
+  onToken?: (token: string) => void;
+  onError?: (errorMsg: string) => void;
+  onDone?: (data: { status: string; total_latency_ms?: number }) => void;
+}
+
+export async function streamChatQuery(
+  docId: string,
+  question: string,
+  handlers: SSEEventHandlers,
+  signal?: AbortSignal
+): Promise<void> {
+  const response = await fetch(`${API_BASE}/api/chat/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ doc_id: docId, question }),
+    signal
+  });
+
+  if (!response.ok) {
+    let errorDetail = 'Streaming connection failed.';
+    try {
+      const errData = await response.json();
+      if (errData && (errData.detail || errData.message)) {
+        errorDetail = errData.detail || errData.message;
+      }
+    } catch (_) {}
+    throw new Error(errorDetail);
+  }
+
+  if (!response.body) {
+    throw new Error('Streaming response body is missing.');
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder('utf-8');
+  let buffer = '';
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const blocks = buffer.split(/\r?\n\r?\n/);
+      buffer = blocks.pop() || '';
+
+      for (const block of blocks) {
+        if (!block.trim()) continue;
+        let eventType = 'message';
+        let dataPayload = '';
+
+        const lines = block.split(/\r?\n/);
+        for (const line of lines) {
+          if (line.startsWith('event:')) {
+            eventType = line.slice(6).trim();
+          } else if (line.startsWith('data:')) {
+            dataPayload += (dataPayload ? '\n' : '') + line.slice(5).trim();
+          }
+        }
+
+        if (!dataPayload) continue;
+
+        try {
+          const parsed = JSON.parse(dataPayload);
+          const effectiveType = parsed.type || eventType;
+
+          if (effectiveType === 'table_ready') {
+            handlers.onTableReady?.(parsed);
+          } else if (effectiveType === 'metadata') {
+            handlers.onMetadata?.(parsed);
+          } else if (effectiveType === 'citation') {
+            handlers.onCitation?.(parsed);
+          } else if (effectiveType === 'token') {
+            handlers.onToken?.(parsed.content ?? parsed.token ?? '');
+          } else if (effectiveType === 'done') {
+            handlers.onDone?.(parsed);
+          } else if (effectiveType === 'error') {
+            handlers.onError?.(parsed.message || 'Error occurred');
+          }
+        } catch (e) {
+          console.warn('SSE JSON parse note:', e, dataPayload);
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+

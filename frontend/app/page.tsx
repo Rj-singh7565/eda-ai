@@ -11,6 +11,7 @@ import {
   fetchDocumentMarkdown,
   fetchChatHistory,
   clearChatHistory,
+  streamChatQuery,
   API_BASE
 } from '../lib/api';
 
@@ -255,96 +256,76 @@ export default function DashboardPage() {
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
 
     try {
-      const response = await fetch(`${API_BASE}/api/chat/stream`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ doc_id: activeDocId, question: questionText })
-      });
-
-      if (!response.ok) {
-        let errorDetail = 'Streaming connection failed.';
-        try {
-          const errData = await response.json();
-          if (errData && (errData.detail || errData.message)) {
-            errorDetail = errData.detail || errData.message;
+      await streamChatQuery(activeDocId, questionText, {
+        onTableReady: (tableData) => {
+          const elapsed = Date.now() - startTime;
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === assistantMsg.id
+                ? {
+                    ...msg,
+                    text: tableData.table_markdown,
+                    tableMarkdown: tableData.table_markdown,
+                    sqlQuery: tableData.sql_query,
+                    latencyMs: tableData.latency_ms || elapsed
+                  }
+                : msg
+            )
+          );
+        },
+        onMetadata: (event) => {
+          const mappedCitations: Citation[] = (event.citations || []).map((c: any, idx: number) => ({
+            id: `cit-${Date.now()}-${idx}`,
+            doc_id: activeDocId,
+            document_name: activeDoc?.filename || 'Document',
+            category: c.is_table ? 'table' : 'text',
+            location: c.pages && c.pages.length > 0 ? `Page ${c.pages.join(', ')}` : 'Excerpt',
+            snippet: c.text_snippet || c.full_text || '',
+            match_type: c.score > 0.85 ? 'Exact match' : 'Text match',
+            score: c.score || 0.8,
+            pages: c.pages || []
+          }));
+          setActiveCitations(mappedCitations);
+          if (mappedCitations.length > 0) {
+            setIsCitationsDrawerOpen(true);
           }
-        } catch (_) {}
-        throw new Error(errorDetail);
-      }
-
-      if (!response.body) {
-        throw new Error('Streaming response body is missing.');
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder('utf-8');
-      let buffer = '';
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const dataStr = line.slice(6).trim();
-            if (!dataStr) continue;
-            try {
-              const event = JSON.parse(dataStr);
-              if (event.type === 'metadata') {
-                const mappedCitations: Citation[] = (event.citations || []).map((c: any, idx: number) => ({
-                  id: `cit-${Date.now()}-${idx}`,
-                  doc_id: activeDocId,
-                  document_name: activeDoc?.filename || 'Document',
-                  category: c.is_table ? 'table' : 'text',
-                  location: c.pages && c.pages.length > 0 ? `Page ${c.pages.join(', ')}` : 'Excerpt',
-                  snippet: c.text_snippet || c.full_text || '',
-                  match_type: c.score > 0.85 ? 'Exact match' : 'Text match',
-                  score: c.score || 0.8,
-                  pages: c.pages || []
-                }));
-                setActiveCitations(mappedCitations);
-                if (mappedCitations.length > 0) {
-                  setIsCitationsDrawerOpen(true);
-                }
-                setMessages((prev) =>
-                  prev.map((msg) =>
-                    msg.id === assistantMsg.id ? { ...msg, citations: mappedCitations } : msg
-                  )
-                );
-              } else if (event.type === 'token') {
-                setMessages((prev) =>
-                  prev.map((msg) =>
-                    msg.id === assistantMsg.id ? { ...msg, text: msg.text + event.content } : msg
-                  )
-                );
-              } else if (event.type === 'done') {
-                const elapsed = Date.now() - startTime;
-                setMessages((prev) =>
-                  prev.map((msg) =>
-                    msg.id === assistantMsg.id ? { ...msg, streaming: false, latencyMs: elapsed } : msg
-                  )
-                );
-                // Refresh stats after Q&A completes
-                fetchDashboardStats().then((s) => s && setStats(s)).catch(() => {});
-              } else if (event.type === 'error') {
-                setMessages((prev) =>
-                  prev.map((msg) =>
-                    msg.id === assistantMsg.id
-                      ? { ...msg, text: event.message || 'Error generating answer.', streaming: false }
-                      : msg
-                  )
-                );
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === assistantMsg.id ? { ...msg, citations: mappedCitations } : msg
+            )
+          );
+        },
+        onToken: (tok) => {
+          setMessages((prev) =>
+            prev.map((msg) => {
+              if (msg.id !== assistantMsg.id) return msg;
+              // If tableMarkdown is already mounted and incoming token is duplicate table content, ignore
+              if (msg.tableMarkdown && tok.startsWith('|') && msg.text.includes(tok.slice(0, 30))) {
+                return msg;
               }
-            } catch (e) {
-              console.error('Error parsing SSE event:', e);
-            }
-          }
+              return { ...msg, text: msg.text + tok };
+            })
+          );
+        },
+        onDone: (data) => {
+          const elapsed = Date.now() - startTime;
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === assistantMsg.id
+                ? { ...msg, streaming: false, latencyMs: data.total_latency_ms || elapsed }
+                : msg
+            )
+          );
+          fetchDashboardStats().then((s) => s && setStats(s)).catch(() => {});
+        },
+        onError: (errMsg) => {
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === assistantMsg.id ? { ...msg, text: errMsg, streaming: false } : msg
+            )
+          );
         }
-      }
+      });
     } catch (err: any) {
       const isFetchErr = err.message && err.message.includes('Failed to fetch');
       const errDisplay = isFetchErr

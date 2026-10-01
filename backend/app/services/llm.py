@@ -1,15 +1,17 @@
 """
-LLM Service — Hybrid Query Router integration, Deterministic DataFrame execution,
-and SSE response streaming with Citations and Executive Insights.
+LLM Service — Hybrid Query Router integration, Deterministic DuckDB/DataFrame execution,
+StreamingThinkFilter state machine, structured SSE events, and sub-second table_ready emission.
 """
 
 import asyncio
 import json
 import re
+import time
 import traceback
 import logging
-from typing import List, Dict, Any, AsyncGenerator
+from typing import List, Dict, Any, AsyncGenerator, Optional
 from groq import Groq
+from fastapi import Request
 
 from backend.app import config
 from backend.app.database import database
@@ -25,6 +27,81 @@ def get_groq_client() -> Groq:
     if _groq_client is None:
         _groq_client = Groq(api_key=config.GROQ_API_KEY)
     return _groq_client
+
+
+def format_sse(event_name: str, data: Dict[str, Any]) -> str:
+    """Format SSE frame compatible with standard event listeners and legacy data-payload consumers."""
+    if "type" not in data:
+        data["type"] = event_name
+    return f"event: {event_name}\ndata: {json.dumps(data)}\n\n"
+
+
+class StreamingThinkFilter:
+    """
+    High-performance streaming state machine that filters <think>...</think> reasoning tags
+    across arbitrary chunk boundaries without regex re-scans or memory bloat.
+    """
+    OPEN_TAG = "<think>"
+    CLOSE_TAG = "</think>"
+
+    def __init__(self):
+        self.in_think = False
+        self.buffer = ""
+
+    def process_token(self, token: str) -> str:
+        """Process incoming token and return sanitized display text."""
+        if not token:
+            return ""
+        output = []
+        for char in token:
+            if not self.in_think:
+                test_buf = self.buffer + char
+                test_buf_lower = test_buf.lower()
+                if test_buf_lower == self.OPEN_TAG:
+                    self.in_think = True
+                    self.buffer = ""
+                elif self.OPEN_TAG.startswith(test_buf_lower):
+                    self.buffer = test_buf
+                else:
+                    found_prefix = False
+                    for i in range(1, len(test_buf)):
+                        suffix = test_buf[i:]
+                        if self.OPEN_TAG.startswith(suffix.lower()):
+                            output.append(test_buf[:i])
+                            self.buffer = suffix
+                            found_prefix = True
+                            break
+                    if not found_prefix:
+                        output.append(test_buf)
+                        self.buffer = ""
+            else:
+                test_buf = self.buffer + char
+                test_buf_lower = test_buf.lower()
+                if test_buf_lower == self.CLOSE_TAG:
+                    self.in_think = False
+                    self.buffer = ""
+                elif self.CLOSE_TAG.startswith(test_buf_lower):
+                    self.buffer = test_buf
+                else:
+                    found_prefix = False
+                    for i in range(1, len(test_buf)):
+                        suffix = test_buf[i:]
+                        if self.CLOSE_TAG.startswith(suffix.lower()):
+                            self.buffer = suffix
+                            found_prefix = True
+                            break
+                    if not found_prefix:
+                        self.buffer = ""
+        return "".join(output)
+
+    def flush(self) -> str:
+        """Flush any pending characters at end of stream if outside thinking block."""
+        if not self.in_think and self.buffer:
+            out = self.buffer
+            self.buffer = ""
+            return out
+        self.buffer = ""
+        return ""
 
 
 def build_insight_prompt(question: str, df_summary_msg: str, table_snippet: str) -> List[Dict[str, str]]:
@@ -60,7 +137,7 @@ def build_document_rag_prompt(
     chat_history: List[Dict[str, str]]
 ) -> List[Dict[str, str]]:
     """
-    Build prompt for unstructured document Q&A with evidence grounding.
+    Build prompt for unstructured document Q&A with evidence grounding and bounded token budget.
     """
     system_prompt = (
         "You are an expert AI Document Intelligence Analyst.\n"
@@ -73,13 +150,21 @@ def build_document_rag_prompt(
         "4. Use clear Markdown formatting with tables or bullet points when structured data is described."
     )
 
+    # Budget context: ~4 chars per token, max config.MAX_RAG_CONTEXT_TOKENS
+    max_chars = config.MAX_RAG_CONTEXT_TOKENS * 4
     context_parts = []
+    current_chars = 0
+
     if chunks:
-        for i, c in enumerate(chunks, start=1):
+        for i, c in enumerate(chunks[:5], start=1):
             raw_text = c.get("text", "").strip()
             clean_text = re.sub(r"^\[(Sheet|Page|Slide|Section|Row|Rows)[^\]]*\]\n?", "", raw_text, flags=re.IGNORECASE).strip()
             page_labels = ", ".join(c.get("pages", []))
-            context_parts.append(f"--- EXCERPT {i} (Source: {page_labels}) ---\n{clean_text}")
+            part = f"--- EXCERPT {i} (Source: {page_labels}) ---\n{clean_text}"
+            if current_chars + len(part) > max_chars and context_parts:
+                break
+            context_parts.append(part)
+            current_chars += len(part)
         context_str = "\n\n".join(context_parts)
     else:
         context_str = "NO RELEVANT EXCERPTS FOUND."
@@ -97,17 +182,29 @@ def build_document_rag_prompt(
     return messages
 
 
-async def generate_answer_stream(doc_id: str, question: str) -> AsyncGenerator[str, None]:
+async def generate_answer_stream(
+    doc_id: str,
+    question: str,
+    request: Optional[Request] = None
+) -> AsyncGenerator[str, None]:
     """
     Stream answer tokens token-by-token using Server-Sent Events (SSE).
-    Dynamically routes between Deterministic DataFrame Engine and Adaptive Document RAG.
+    Dynamically routes between Deterministic DataFrame/DuckDB Engine and Adaptive Document RAG.
+    Supports request cancellation, instant table_ready emission, and streaming think filter.
     """
+    start_time = time.time()
     try:
-        # Step 1: Query Classification & Routing
-        query_type, schema_info = query_router.classify_query(question, doc_id)
-        logger.info(f"[QUERY ROUTER] doc_id={doc_id} query='{question[:40]}' classified_as={query_type}")
+        # Check cancellation
+        if request and await request.is_disconnected():
+            logger.info(f"[CLIENT DISCONNECT] Aborting stream for doc_id={doc_id} before routing.")
+            return
 
-        # ── BRANCH A: STRUCTURED DATASET OPERATION ────────────────────────────
+        # Step 1: Fast Query Classification & Routing (<5ms with DB metadata)
+        query_type, schema_info = query_router.classify_query(question, doc_id)
+        router_latency_ms = (time.time() - start_time) * 1000.0
+        logger.info(f"[QUERY ROUTER] doc_id={doc_id} query='{question[:40]}' classified_as={query_type} in {router_latency_ms:.1f}ms")
+
+        # ── BRANCH A: STRUCTURED DATASET OPERATION (DUCKDB / PARQUET) ────────
         if query_type == "STRUCTURED_DATA_OPERATION" and schema_info:
             plan = query_router.plan_structured_operation(question, schema_info)
             df_result = dataset_engine.execute_dataframe_operation(doc_id, plan)
@@ -115,13 +212,15 @@ async def generate_answer_stream(doc_id: str, question: str) -> AsyncGenerator[s
             # Handle Schema / Missing Column Errors Gracefully
             if not df_result.get("success"):
                 err_msg = df_result.get("message", "Error executing dataset query.")
-                # Send metadata with empty citations
-                yield f"data: {json.dumps({'type': 'metadata', 'citations': [], 'has_context': False})}\n\n"
-                # Stream the schema-aware message
-                yield f"data: {json.dumps({'type': 'token', 'content': err_msg})}\n\n"
+                yield format_sse("metadata", {"citations": [], "has_context": False})
+                yield format_sse("token", {"content": err_msg})
                 database.add_chat_turn(doc_id, question, err_msg)
-                yield f"data: {json.dumps({'type': 'done', 'status': 'completed'})}\n\n"
+                yield format_sse("done", {"status": "completed"})
                 return
+
+            md_table = df_result.get("markdown_table", "")
+            sql_query = df_result.get("sql_query", plan.get("sql", "SELECT * FROM active_dataset LIMIT 10;"))
+            exec_latency_ms = df_result.get("execution_latency_ms", (time.time() - start_time) * 1000.0)
 
             # Build Citation for Structured Dataset
             sheet_label = plan.get("sheet_name") or "Dataset"
@@ -133,16 +232,33 @@ async def generate_answer_stream(doc_id: str, question: str) -> AsyncGenerator[s
                 "pages": [f"{sheet_label} ({res_rows_count} / {total_rows} rows)"],
                 "score": 1.0,
                 "text_snippet": f"Executed deterministic {plan.get('operation')} operation. Returned {res_rows_count} rows across {cols_count} columns.",
-                "full_text": df_result.get("markdown_table", ""),
+                "full_text": md_table,
                 "is_table": True
             }]
 
-            yield f"data: {json.dumps({'type': 'metadata', 'citations': citations, 'has_context': True})}\n\n"
+            # 1. EMIT table_ready EVENT IMMEDIATELY (Sub-Second Target)
+            table_ready_payload = {
+                "type": "table_ready",
+                "table_markdown": md_table,
+                "sql_query": sql_query,
+                "latency_ms": round(exec_latency_ms, 2),
+                "row_count": res_rows_count,
+                "column_count": cols_count
+            }
+            yield format_sse("table_ready", table_ready_payload)
 
-            # Stream the pristine Markdown Table directly from the verified DataFrame
-            md_table = df_result.get("markdown_table", "")
-            # Yield table in responsive chunks
-            yield f"data: {json.dumps({'type': 'token', 'content': md_table})}\n\n"
+            # 2. EMIT metadata EVENT (Citations & Schema Context)
+            yield format_sse("metadata", {"citations": citations, "has_context": True})
+            yield format_sse("citation", {"citations": citations})
+
+            # 3. Stream Markdown Table as primary token for legacy consumers
+            yield format_sse("token", {"content": md_table})
+
+            # Check client disconnection before generating executive insight
+            if request and await request.is_disconnected():
+                logger.info("[CLIENT DISCONNECT] Client disconnected before insight generation.")
+                database.add_chat_turn(doc_id, question, md_table)
+                return
 
             # Generate AI Executive Insight over the verified result
             table_snippet = md_table[:1000]
@@ -165,8 +281,11 @@ async def generate_answer_stream(doc_id: str, question: str) -> AsyncGenerator[s
                     unique_models.append(m)
 
             insight_text = ""
+            think_filter = StreamingThinkFilter()
             try:
                 for model_name in unique_models:
+                    if request and await request.is_disconnected():
+                        break
                     try:
                         stream = client.chat.completions.create(
                             model=model_name,
@@ -176,29 +295,44 @@ async def generate_answer_stream(doc_id: str, question: str) -> AsyncGenerator[s
                             stream=True
                         )
                         # Stream insight prefix
-                        yield f"data: {json.dumps({'type': 'token', 'content': '\n\n**Insight:** '})}\n\n"
+                        yield format_sse("token", {"content": "\n\n**Insight:** "})
                         for chunk in stream:
+                            if request and await request.is_disconnected():
+                                logger.info("[CLIENT DISCONNECT] Disconnected during tabular insight stream.")
+                                break
                             if chunk.choices and chunk.choices[0].delta.content:
                                 tok = chunk.choices[0].delta.content
-                                insight_text += tok
-                                yield f"data: {json.dumps({'type': 'token', 'content': tok})}\n\n"
+                                clean_tok = think_filter.process_token(tok)
+                                if clean_tok:
+                                    insight_text += clean_tok
+                                    yield format_sse("token", {"content": clean_tok})
+                        flushed = think_filter.flush()
+                        if flushed:
+                            insight_text += flushed
+                            yield format_sse("token", {"content": flushed})
                         break
                     except Exception as model_err:
                         logger.warning(f"Groq insight model '{model_name}' note: {model_err}")
             except Exception as e:
                 logger.warning(f"Insight generation skipped: {e}")
 
-            # Persist the complete response to database
+            # Persist complete response to database
             full_answer = md_table
             if insight_text.strip():
                 full_answer += f"\n\n**Insight:** {insight_text.strip()}"
             database.add_chat_turn(doc_id, question, full_answer)
 
-            yield f"data: {json.dumps({'type': 'done', 'status': 'completed'})}\n\n"
+            total_elapsed = (time.time() - start_time) * 1000.0
+            yield format_sse("done", {"status": "completed", "total_latency_ms": round(total_elapsed, 2)})
             return
 
         # ── BRANCH B: ADAPTIVE DOCUMENT RAG ───────────────────────────────────
         chunks = await asyncio.to_thread(retrieval.retrieve_chunks, doc_id, question)
+
+        if request and await request.is_disconnected():
+            logger.info("[CLIENT DISCONNECT] Disconnected after document retrieval.")
+            return
+
         history = database.get_recent_chat_history(doc_id, limit=config.MEMORY_TURNS)
         messages = build_document_rag_prompt(question, chunks, history)
 
@@ -212,7 +346,8 @@ async def generate_answer_stream(doc_id: str, question: str) -> AsyncGenerator[s
                 "is_table": c.get("is_table", False)
             })
 
-        yield f"data: {json.dumps({'type': 'metadata', 'citations': citations, 'has_context': len(chunks) > 0})}\n\n"
+        yield format_sse("metadata", {"citations": citations, "has_context": len(chunks) > 0})
+        yield format_sse("citation", {"citations": citations})
 
         client = get_groq_client()
         candidate_models = [
@@ -233,6 +368,8 @@ async def generate_answer_stream(doc_id: str, question: str) -> AsyncGenerator[s
         stream = None
         last_exception = None
         for model_name in unique_models:
+            if request and await request.is_disconnected():
+                return
             try:
                 stream = client.chat.completions.create(
                     model=model_name,
@@ -249,26 +386,36 @@ async def generate_answer_stream(doc_id: str, question: str) -> AsyncGenerator[s
         if stream is None:
             raise last_exception or Exception("All candidate LLM models failed on Groq API.")
 
-        accumulated_raw = ""
-        last_yielded_len = 0
+        think_filter = StreamingThinkFilter()
+        accumulated_clean = ""
+        ttft_recorded = False
 
         for chunk in stream:
+            if request and await request.is_disconnected():
+                logger.info("[CLIENT DISCONNECT] Client disconnected during RAG generation.")
+                break
             if chunk.choices and chunk.choices[0].delta.content:
                 token = chunk.choices[0].delta.content
-                accumulated_raw += token
+                clean_tok = think_filter.process_token(token)
+                if clean_tok:
+                    if not ttft_recorded:
+                        ttft_ms = (time.time() - start_time) * 1000.0
+                        logger.info(f"[LLM TTFT] Time to first token: {ttft_ms:.1f}ms for doc_id={doc_id}")
+                        ttft_recorded = True
+                    accumulated_clean += clean_tok
+                    yield format_sse("token", {"content": clean_tok})
 
-                clean_accumulated = re.sub(r'<think>[\s\S]*?(?:<\/think>|$)', '', accumulated_raw, flags=re.IGNORECASE)
+        flushed = think_filter.flush()
+        if flushed:
+            accumulated_clean += flushed
+            yield format_sse("token", {"content": flushed})
 
-                if len(clean_accumulated) > last_yielded_len:
-                    new_clean_chunk = clean_accumulated[last_yielded_len:]
-                    last_yielded_len = len(clean_accumulated)
-                    yield f"data: {json.dumps({'type': 'token', 'content': new_clean_chunk})}\n\n"
-
-        database.add_chat_turn(doc_id, question, accumulated_raw.strip())
-        yield f"data: {json.dumps({'type': 'done', 'status': 'completed'})}\n\n"
+        database.add_chat_turn(doc_id, question, accumulated_clean.strip())
+        total_elapsed = (time.time() - start_time) * 1000.0
+        yield format_sse("done", {"status": "completed", "total_latency_ms": round(total_elapsed, 2)})
 
     except Exception as e:
         err_msg = f"Error generating answer: {str(e)}"
         logger.error(f"[LLM STREAM ERROR] {err_msg}")
         traceback.print_exc()
-        yield f"data: {json.dumps({'type': 'error', 'message': err_msg})}\n\n"
+        yield format_sse("error", {"message": "An error occurred while generating the answer. Please try again."})

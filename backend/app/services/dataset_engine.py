@@ -7,16 +7,57 @@ import os
 import glob
 import re
 import math
+import os
+import glob
+import re
+import math
+import time
 from typing import List, Dict, Any, Optional, Tuple, Union
 import pandas as pd
 import numpy as np
+try:
+    import duckdb
+    HAS_DUCKDB = True
+except ImportError:
+    duckdb = None
+    HAS_DUCKDB = False
+
+import threading
 
 from backend.app import config
 from backend.app.database import database
 
+# Reusable DuckDB in-memory connection and concurrency semaphore
+_DUCKDB_CONN = None
+_DUCKDB_SEMAPHORE = threading.BoundedSemaphore(getattr(config, "EDA_MAX_DUCKDB_CONCURRENCY", 8))
+
+
+def get_duckdb_connection():
+    """Get or initialize reusable DuckDB connection with configured threads."""
+    global _DUCKDB_CONN
+    if not HAS_DUCKDB:
+        return None
+    if _DUCKDB_CONN is None:
+        _DUCKDB_CONN = duckdb.connect(":memory:")
+        threads = getattr(config, "DUCKDB_THREADS", 0)
+        if threads > 0:
+            try:
+                _DUCKDB_CONN.execute(f"SET threads TO {threads};")
+            except Exception:
+                pass
+    return _DUCKDB_CONN
+
+
+def get_duckdb_cursor():
+    """Get a thread-safe cursor for concurrent vectorized queries."""
+    main_conn = get_duckdb_connection()
+    return main_conn.cursor()
+
+
 # In-memory DataFrame cache: doc_id -> { "mtime": float, "sheets": { sheet_name: df } }
 _DF_CACHE: Dict[str, Dict[str, Any]] = {}
 _MAX_CACHE_ENTRIES = 20
+
 
 
 def _get_raw_file_path(doc_id: str) -> Optional[str]:
@@ -122,8 +163,83 @@ def load_dataframe(doc_id: str, sheet_name: Optional[str] = None) -> Tuple[Optio
     return loaded_sheets[target_sheet].copy(), None
 
 
+def transcode_to_parquet(doc_id: str, file_path: str, file_type: str = "csv") -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+    """
+    Transcode uploaded CSV or Excel data into Snappy-compressed Apache Parquet
+    and precompute structured dataset profile for instant database retrieval.
+    """
+    try:
+        parquet_path = os.path.join(config.PROCESSED_DIR, f"{doc_id}.parquet")
+        if os.path.exists(parquet_path):
+            meta = database.get_dataset_metadata(doc_id)
+            if meta:
+                return parquet_path, meta
+
+        ext = os.path.splitext(file_path)[1].lower()
+        if ext == ".csv" or file_type == "csv":
+            try:
+                df = pd.read_csv(file_path, encoding="utf-8", low_memory=False)
+            except Exception:
+                df = pd.read_csv(file_path, encoding="latin-1", low_memory=False)
+        elif ext in (".xlsx", ".xls") or file_type == "excel":
+            df = pd.read_excel(file_path)
+        else:
+            return None, None
+
+        df = df.dropna(how="all")
+        df.columns = [str(c).strip() for c in df.columns]
+
+        # Write Parquet with Snappy compression
+        df.to_parquet(parquet_path, engine="pyarrow", compression=getattr(config, "PARQUET_COMPRESSION", "snappy"), index=False)
+
+        total_rows = len(df)
+        total_cols = len(df.columns)
+        numeric_cols = [str(c) for c in df.select_dtypes(include=[np.number]).columns]
+        categorical_cols = [str(c) for c in df.select_dtypes(exclude=[np.number]).columns]
+
+        null_counts = {str(c): int(df[c].isna().sum()) for c in df.columns}
+        null_rates = {str(c): round(null_counts[str(c)] / max(total_rows, 1), 4) for c in df.columns}
+        data_types = {str(c): str(df[c].dtype) for c in df.columns}
+
+        profile = {
+            "document_id": doc_id,
+            "dataset_version": 1,
+            "columns": list(df.columns),
+            "column_names": list(df.columns),
+            "column_order": list(df.columns),
+            "numeric_columns": numeric_cols,
+            "categorical_columns": categorical_cols,
+            "data_types": data_types,
+            "row_count": total_rows,
+            "column_count": total_cols,
+            "null_counts": null_counts,
+            "null_rates": null_rates,
+            "parquet_path": parquet_path
+        }
+        database.save_dataset_metadata(doc_id, profile, parquet_path)
+        return parquet_path, profile
+    except Exception as e:
+        print(f"[DATASET_ENGINE] Transcode error for doc {doc_id}: {e}")
+        return None, None
+
+
 def get_dataset_schema(doc_id: str) -> Dict[str, Any]:
-    """Inspect and return schema metadata for the dataset."""
+    """Inspect and return schema metadata for the dataset, prioritizing precomputed DB profile."""
+    # Fast path: check database precomputed profile (<1ms, zero file I/O)
+    meta = database.get_dataset_metadata(doc_id)
+    if meta and "columns" in meta:
+        return {
+            "doc_id": doc_id,
+            "total_rows": meta.get("row_count", 0),
+            "total_columns": meta.get("column_count", len(meta["columns"])),
+            "columns": meta.get("columns", []),
+            "dtypes": meta.get("data_types", {}),
+            "numeric_columns": meta.get("numeric_columns", []),
+            "categorical_columns": meta.get("categorical_columns", []),
+            "sheets": ["default"],
+            "samples": meta.get("sample_rows", {})
+        }
+
     df, err = load_dataframe(doc_id)
     if err or df is None:
         return {"error": err or "Failed to load dataset"}
@@ -151,6 +267,7 @@ def get_dataset_schema(doc_id: str) -> Dict[str, Any]:
         "sheets": sheets,
         "samples": samples
     }
+
 
 
 def resolve_column_name(target_name: str, available_columns: List[str]) -> Optional[str]:
@@ -238,11 +355,376 @@ def serialize_dataframe_to_markdown(
     return f"{header_line}\n{sep_line}\n" + "\n".join(rows)
 
 
+def validate_sql_safety(sql: str) -> bool:
+    """Strict validation: ensure query is strictly read-only."""
+    clean = sql.strip().upper()
+    if not (clean.startswith("SELECT ") or clean.startswith("WITH ")):
+        return False
+    forbidden = [
+        "DROP ", "DELETE ", "UPDATE ", "INSERT ", "ALTER ", "CREATE ",
+        "ATTACH ", "DETACH ", "COPY ", "EXPORT ", "PRAGMA ", "EXECUTE ",
+        "GRANT ", "REVOKE ", "TRUNCATE ", "SET "
+    ]
+    for kw in forbidden:
+        if kw in clean:
+            return False
+    return True
+
+
+def execute_duckdb_operation(
+    doc_id: str,
+    plan: Dict[str, Any],
+    source_expr: str,
+    original_columns: List[str],
+    total_dataset_rows: int
+) -> Optional[Dict[str, Any]]:
+    """
+    Executes a structured operation directly with DuckDB for sub-25ms execution
+    and zero-copy memory overhead. Returns None on unsupported ops or errors to trigger fallback.
+    """
+    op = (plan.get("operation") or "select").lower()
+    if not HAS_DUCKDB or op in ("null_analysis", "missing_analysis"):
+        return None
+
+    try:
+        preserve_all = plan.get("preserve_all_columns", True)
+        explicit_columns = plan.get("target_columns") or []
+
+        resolved_target_cols = []
+        if explicit_columns and not preserve_all:
+            for c in explicit_columns:
+                m = resolve_column_name(c, original_columns)
+                if m and m not in resolved_target_cols:
+                    resolved_target_cols.append(m)
+        if not resolved_target_cols:
+            resolved_target_cols = list(original_columns)
+
+        # Build WHERE clause
+        where_clauses = []
+        filter_descriptions = []
+        for cond in plan.get("conditions") or []:
+            col_raw = cond.get("column")
+            if not col_raw:
+                continue
+            c_name = resolve_column_name(col_raw, original_columns)
+            if not c_name:
+                continue
+
+            c_escaped = f'"{c_name.replace(chr(34), "")}"'
+            op_str = cond.get("operator", "==").lower()
+            val = cond.get("value")
+
+            if op_str in (">", "gt"):
+                try:
+                    num_val = float(val)
+                    where_clauses.append(f"TRY_CAST({c_escaped} AS DOUBLE) > {num_val}")
+                    filter_descriptions.append(f"{c_name} > {num_val}")
+                except Exception:
+                    pass
+            elif op_str in (">=", "gte"):
+                try:
+                    num_val = float(val)
+                    where_clauses.append(f"TRY_CAST({c_escaped} AS DOUBLE) >= {num_val}")
+                    filter_descriptions.append(f"{c_name} >= {num_val}")
+                except Exception:
+                    pass
+            elif op_str in ("<", "lt"):
+                try:
+                    num_val = float(val)
+                    where_clauses.append(f"TRY_CAST({c_escaped} AS DOUBLE) < {num_val}")
+                    filter_descriptions.append(f"{c_name} < {num_val}")
+                except Exception:
+                    pass
+            elif op_str in ("<=", "lte"):
+                try:
+                    num_val = float(val)
+                    where_clauses.append(f"TRY_CAST({c_escaped} AS DOUBLE) <= {num_val}")
+                    filter_descriptions.append(f"{c_name} <= {num_val}")
+                except Exception:
+                    pass
+            elif op_str in ("==", "=", "eq"):
+                if isinstance(val, (int, float)) or (isinstance(val, str) and val.replace(".", "", 1).isdigit()):
+                    num_val = float(val)
+                    where_clauses.append(f"(TRY_CAST({c_escaped} AS DOUBLE) = {num_val} OR LOWER(TRIM(CAST({c_escaped} AS VARCHAR))) = '{str(val).lower().replace(chr(39), chr(39)+chr(39))}')")
+                else:
+                    esc_val = str(val).replace("'", "''").lower()
+                    where_clauses.append(f"LOWER(TRIM(CAST({c_escaped} AS VARCHAR))) = '{esc_val}'")
+                filter_descriptions.append(f"{c_name} == {val}")
+            elif op_str in ("!=", "<>", "neq"):
+                esc_val = str(val).replace("'", "''").lower()
+                where_clauses.append(f"LOWER(TRIM(CAST({c_escaped} AS VARCHAR))) != '{esc_val}'")
+                filter_descriptions.append(f"{c_name} != {val}")
+            elif op_str in ("contains", "like"):
+                esc_val = str(val).replace("'", "''").lower()
+                where_clauses.append(f"LOWER(CAST({c_escaped} AS VARCHAR)) LIKE '%{esc_val}%'")
+                filter_descriptions.append(f"{c_name} contains '{val}'")
+            elif op_str in ("startswith",):
+                esc_val = str(val).replace("'", "''").lower()
+                where_clauses.append(f"LOWER(CAST({c_escaped} AS VARCHAR)) LIKE '{esc_val}%'")
+                filter_descriptions.append(f"{c_name} starts with '{val}'")
+            elif op_str in ("isnull", "null", "missing"):
+                where_clauses.append(f"({c_escaped} IS NULL OR TRIM(CAST({c_escaped} AS VARCHAR)) = '')")
+                filter_descriptions.append(f"{c_name} is null")
+            elif op_str in ("notnull", "not_null", "present"):
+                where_clauses.append(f"({c_escaped} IS NOT NULL AND TRIM(CAST({c_escaped} AS VARCHAR)) != '')")
+                filter_descriptions.append(f"{c_name} is present")
+            elif op_str in ("isin", "in") and isinstance(val, list):
+                items = [f"'{str(v).replace(chr(39), chr(39)+chr(39)).lower()}'" for v in val]
+                where_clauses.append(f"LOWER(TRIM(CAST({c_escaped} AS VARCHAR))) IN ({', '.join(items)})")
+                filter_descriptions.append(f"{c_name} in {val}")
+
+        where_sql = (" WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+
+        # Handle Aggregations
+        if op in ("aggregate", "agg", "calc", "math"):
+            aggs = plan.get("aggregations") or []
+            res_rows = []
+            res_cols = ["Metric / Aggregation", "Column", "Calculated Value"]
+            con = get_duckdb_cursor()
+            agg_dt = 0.0
+
+            for agg_item in aggs:
+                raw_c = agg_item.get("column")
+                func = (agg_item.get("function") or "mean").lower()
+                matched_c = resolve_column_name(raw_c, original_columns) if raw_c else original_columns[0]
+                if not matched_c:
+                    continue
+
+                col_esc = f'"{matched_c.replace(chr(34), "")}"'
+                if func in ("count", "total_rows"):
+                    agg_sql = f"SELECT COUNT(*) FROM {source_expr}{where_sql}"
+                elif func in ("sum", "total"):
+                    agg_sql = f"SELECT SUM(TRY_CAST({col_esc} AS DOUBLE)) FROM {source_expr}{where_sql}"
+                elif func in ("mean", "average", "avg"):
+                    agg_sql = f"SELECT AVG(TRY_CAST({col_esc} AS DOUBLE)) FROM {source_expr}{where_sql}"
+                elif func in ("median", "med"):
+                    agg_sql = f"SELECT MEDIAN(TRY_CAST({col_esc} AS DOUBLE)) FROM {source_expr}{where_sql}"
+                elif func in ("min", "minimum", "lowest"):
+                    agg_sql = f"SELECT MIN(TRY_CAST({col_esc} AS DOUBLE)) FROM {source_expr}{where_sql}"
+                elif func in ("max", "maximum", "highest"):
+                    agg_sql = f"SELECT MAX(TRY_CAST({col_esc} AS DOUBLE)) FROM {source_expr}{where_sql}"
+                elif func in ("std", "stddev"):
+                    agg_sql = f"SELECT STDDEV_SAMP(TRY_CAST({col_esc} AS DOUBLE)) FROM {source_expr}{where_sql}"
+                elif func in ("unique", "distinct", "cardinality"):
+                    agg_sql = f"SELECT COUNT(DISTINCT {col_esc}) FROM {source_expr}{where_sql}"
+                else:
+                    agg_sql = f"SELECT COUNT(*) FROM {source_expr}{where_sql}"
+
+                t_agg0 = time.perf_counter()
+                agg_val = con.execute(agg_sql).fetchone()[0]
+                agg_dt = (time.perf_counter() - t_agg0) * 1000
+
+                if agg_val is None:
+                    val_out = "N/A"
+                elif isinstance(agg_val, float):
+                    val_out = f"{agg_val:,.4f}".rstrip("0").rstrip(".") if abs(agg_val - round(agg_val)) > 1e-6 else str(int(round(agg_val)))
+                else:
+                    val_out = f"{agg_val:,}"
+
+                res_rows.append([func.upper(), matched_c, val_out])
+
+            agg_df = pd.DataFrame(res_rows, columns=res_cols)
+            md_table = serialize_dataframe_to_markdown(agg_df)
+            return {
+                "success": True,
+                "type": "table",
+                "operation": op,
+                "columns": res_cols,
+                "rows": res_rows,
+                "row_count": len(res_rows),
+                "total_dataset_rows": total_dataset_rows,
+                "markdown_table": md_table,
+                "engine": "duckdb",
+                "execution_latency_ms": round(agg_dt, 2),
+                "message": f"Successfully computed {len(res_rows)} metric(s) with DuckDB."
+            }
+
+        # GROUP BY
+        if op in ("groupby", "group_by"):
+            group_cols = []
+            for g in plan.get("group_by") or []:
+                mg = resolve_column_name(g, original_columns)
+                if mg:
+                    group_cols.append(mg)
+            if not group_cols:
+                group_cols = [original_columns[0]]
+
+            group_exprs = [f'"{c.replace(chr(34), "")}"' for c in group_cols]
+            agg_exprs = []
+            out_cols = list(group_cols)
+
+            for a in plan.get("aggregations") or [{"column": original_columns[0], "function": "count"}]:
+                col_match = resolve_column_name(a.get("column", ""), original_columns) or group_cols[0]
+                col_esc = f'"{col_match.replace(chr(34), "")}"'
+                fn = a.get("function", "count").lower()
+                if fn in ("count", "total_rows"):
+                    alias = f"{col_match}_COUNT"
+                    agg_exprs.append(f"COUNT(*) AS \"{alias}\"")
+                    out_cols.append(alias)
+                elif fn in ("sum", "total"):
+                    alias = f"{col_match}_SUM"
+                    agg_exprs.append(f"SUM(TRY_CAST({col_esc} AS DOUBLE)) AS \"{alias}\"")
+                    out_cols.append(alias)
+                elif fn in ("mean", "average", "avg"):
+                    alias = f"{col_match}_AVG"
+                    agg_exprs.append(f"AVG(TRY_CAST({col_esc} AS DOUBLE)) AS \"{alias}\"")
+                    out_cols.append(alias)
+                elif fn in ("median", "med"):
+                    alias = f"{col_match}_MEDIAN"
+                    agg_exprs.append(f"MEDIAN(TRY_CAST({col_esc} AS DOUBLE)) AS \"{alias}\"")
+                    out_cols.append(alias)
+                elif fn in ("min", "minimum", "lowest"):
+                    alias = f"{col_match}_MIN"
+                    agg_exprs.append(f"MIN(TRY_CAST({col_esc} AS DOUBLE)) AS \"{alias}\"")
+                    out_cols.append(alias)
+                elif fn in ("max", "maximum", "highest"):
+                    alias = f"{col_match}_MAX"
+                    agg_exprs.append(f"MAX(TRY_CAST({col_esc} AS DOUBLE)) AS \"{alias}\"")
+                    out_cols.append(alias)
+
+            select_cols = ", ".join(group_exprs + agg_exprs)
+            sql = f"SELECT {select_cols} FROM {source_expr}{where_sql} GROUP BY {', '.join(group_exprs)}"
+
+            if plan.get("sort_by"):
+                s_item = plan["sort_by"][0]
+                s_match = resolve_column_name(s_item.get("column", ""), out_cols)
+                if s_match:
+                    s_dir = "ASC" if s_item.get("ascending", False) else "DESC"
+                    sql += f' ORDER BY "{s_match}" {s_dir}'
+
+            limit = plan.get("limit") or 100
+            sql += f" LIMIT {int(limit)}"
+
+            if not validate_sql_safety(sql):
+                return None
+
+            t0 = time.perf_counter()
+            with _DUCKDB_SEMAPHORE:
+                con = get_duckdb_cursor()
+                grouped_df = con.execute(sql).df()
+            exec_ms = (time.perf_counter() - t0) * 1000
+
+            md_table = serialize_dataframe_to_markdown(grouped_df, columns=out_cols)
+            rows_list = []
+            for _, r in grouped_df.iterrows():
+                rows_list.append([str(r[c]) if pd.notna(r[c]) else "—" for c in out_cols])
+
+            return {
+                "success": True,
+                "type": "table",
+                "operation": op,
+                "columns": out_cols,
+                "rows": rows_list,
+                "row_count": len(rows_list),
+                "total_dataset_rows": total_dataset_rows,
+                "markdown_table": md_table,
+                "sql_query": sql,
+                "engine": "duckdb",
+                "execution_latency_ms": round(exec_ms, 2),
+                "message": f"Grouped by {', '.join(group_cols)} ({len(rows_list)} groups)."
+            }
+
+        # Standard SELECT / Filter / Sort
+        col_projections = [f'"{c.replace(chr(34), "")}"' for c in resolved_target_cols]
+        sql = f"SELECT {', '.join(col_projections)} FROM {source_expr}{where_sql}"
+
+        # Sorting
+        sort_clauses = []
+        for s_item in plan.get("sort_by") or []:
+            s_col = resolve_column_name(s_item.get("column", ""), original_columns)
+            if s_col:
+                s_dir = "ASC" if s_item.get("ascending", True) else "DESC"
+                sort_clauses.append(f'"{s_col}" {s_dir}')
+        if sort_clauses:
+            sql += " ORDER BY " + ", ".join(sort_clauses)
+
+        # Limiting
+        limit = plan.get("limit")
+        if op in ("top_n", "top"):
+            sql += f" LIMIT {int(limit or 10)}"
+        elif limit and int(limit) > 0:
+            sql += f" LIMIT {int(limit)}"
+
+        if not validate_sql_safety(sql):
+            return None
+
+        t0 = time.perf_counter()
+        with _DUCKDB_SEMAPHORE:
+            con = get_duckdb_cursor()
+            res_df = con.execute(sql).df()
+        exec_ms = (time.perf_counter() - t0) * 1000
+
+        # Enforce exact column order and names
+        final_cols = [c for c in resolved_target_cols if c in res_df.columns]
+        if not final_cols:
+            final_cols = list(original_columns)
+        res_df = res_df[final_cols]
+
+        md_table = serialize_dataframe_to_markdown(res_df, columns=final_cols)
+
+        rows_data: List[List[str]] = []
+        for _, r in res_df.iterrows():
+            row_vals = []
+            for c in final_cols:
+                val = r[c]
+                if pd.isna(val) or val is None:
+                    row_vals.append("—")
+                elif isinstance(val, (float, np.floating)):
+                    row_vals.append(f"{val:.4f}".rstrip("0").rstrip(".") if abs(val - round(val)) > 1e-6 else str(int(round(val))))
+                else:
+                    row_vals.append(str(val).strip())
+            rows_data.append(row_vals)
+
+        filters_desc = f" matching {', '.join(filter_descriptions)}" if filter_descriptions else ""
+        msg = f"Found {len(rows_data):,} record(s){filters_desc} with all {len(final_cols)} column(s) preserved."
+
+        return {
+            "success": True,
+            "type": "table",
+            "operation": op,
+            "columns": final_cols,
+            "rows": rows_data,
+            "row_count": len(rows_data),
+            "total_dataset_rows": total_dataset_rows,
+            "markdown_table": md_table,
+            "sql_query": sql,
+            "engine": "duckdb",
+            "execution_latency_ms": round(exec_ms, 2),
+            "message": msg
+        }
+    except Exception as d_err:
+        print(f"[DATASET_ENGINE] DuckDB execution note (falling back to pandas): {d_err}")
+        return None
+
+
 def execute_dataframe_operation(doc_id: str, plan: Dict[str, Any]) -> Dict[str, Any]:
     """
     Executes a structured, deterministic DataFrame operation plan.
-    Enforces Column Preservation, exact aggregations, and schema validation.
+    Prefers zero-copy DuckDB execution directly over Parquet file if available.
+    Falls back to Pandas execution if Parquet is absent or DuckDB query cannot be applied.
     """
+    # ── Fast Path: Direct DuckDB Execution over Parquet (Zero-Copy) ──
+    parquet_path = os.path.join(config.PROCESSED_DIR, f"{doc_id}.parquet")
+    meta = database.get_dataset_metadata(doc_id)
+    if not meta:
+        doc = database.get_document(doc_id)
+        if doc and doc.get("parquet_path") and os.path.exists(doc["parquet_path"]):
+            parquet_path = doc["parquet_path"]
+            meta = database.get_dataset_metadata(doc_id)
+
+    if os.path.exists(parquet_path) and meta and "columns" in meta:
+        norm_pq = parquet_path.replace("\\", "/")
+        source_expr = f"read_parquet('{norm_pq}')"
+        duck_res = execute_duckdb_operation(
+            doc_id=doc_id,
+            plan=plan,
+            source_expr=source_expr,
+            original_columns=meta["columns"],
+            total_dataset_rows=meta.get("row_count", 0)
+        )
+        if duck_res and duck_res.get("success"):
+            return duck_res
+
     df, err = load_dataframe(doc_id, sheet_name=plan.get("sheet_name"))
     if err or df is None:
         return {
@@ -281,6 +763,38 @@ def execute_dataframe_operation(doc_id: str, plan: Dict[str, Any]) -> Dict[str, 
                     f"Available columns are: {avail_str}."
                 )
             }
+
+    # Verify condition columns exist before DuckDB or Pandas
+    for cond in plan.get("conditions") or []:
+        col_raw = cond.get("column")
+        if not col_raw:
+            continue
+        col_match = resolve_column_name(col_raw, original_columns)
+        if not col_match:
+            avail_str = ", ".join([f"'{c}'" for c in original_columns])
+            return {
+                "success": False,
+                "error_type": "missing_column",
+                "message": f"Column '{col_raw}' was not found in the dataset. Available columns: {avail_str}."
+            }
+
+    # High-Performance DuckDB Vectorized Path (<25ms execution)
+    source_expr = None
+    pq_path = os.path.join(config.PROCESSED_DIR, f"{doc_id}.parquet")
+    if os.path.exists(pq_path):
+        source_expr = f"'{pq_path.replace(chr(92), '/')}'"
+    else:
+        raw_path = _get_raw_file_path(doc_id)
+        if raw_path and os.path.exists(raw_path):
+            clean_raw = raw_path.replace(chr(92), "/")
+            if raw_path.lower().endswith(".csv"):
+                source_expr = f"read_csv_auto('{clean_raw}')"
+
+    if source_expr:
+        duck_res = execute_duckdb_operation(doc_id, plan, source_expr, original_columns, total_dataset_rows)
+        if duck_res is not None:
+            return duck_res
+
     else:
         # Default: STRICT 100% COLUMN PRESERVATION in original order
         resolved_target_cols = list(original_columns)
