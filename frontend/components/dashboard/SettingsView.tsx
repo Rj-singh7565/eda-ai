@@ -1,5 +1,3 @@
-'use client';
-
 import React from 'react';
 import { Settings, Cpu, HardDrive, ShieldCheck, Key, Sliders, CheckCircle2 } from 'lucide-react';
 import { SystemHealth } from '../../lib/types';

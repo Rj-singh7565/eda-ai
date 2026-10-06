@@ -1,5 +1,3 @@
-'use client';
-
 import React from 'react';
 import { HardDrive, Database, Server, FileText, CheckCircle2, ShieldCheck } from 'lucide-react';
 import { Document, DashboardStats, SystemHealth } from '../../lib/types';
