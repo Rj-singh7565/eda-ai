@@ -1,4 +1,4 @@
-import { Document, UploadResponse, ChatMessage, SystemHealth } from './types';
+import { Document, UploadResponse, ChatMessage, SystemHealth, PythonQueryData } from './types';
 
 export const API_BASE = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/+$/, '');
 
@@ -78,6 +78,14 @@ export interface SSEEventHandlers {
   onTableReady?: (data: {
     table_markdown: string;
     sql_query?: string;
+    python_query?: string;
+    analytical_plan?: any;
+    dataset_name?: string;
+    dataset_id?: string;
+    dataset_version?: string;
+    query_id?: string;
+    operations?: string[];
+    library?: string;
     latency_ms?: number;
     row_count?: number;
     column_count?: number;
@@ -87,6 +95,31 @@ export interface SSEEventHandlers {
   onToken?: (token: string) => void;
   onError?: (errorMsg: string) => void;
   onDone?: (data: { status: string; total_latency_ms?: number }) => void;
+}
+
+export async function fetchPythonQuery(
+  docId: string,
+  question?: string,
+  plan?: any
+): Promise<PythonQueryData> {
+  const res = await fetch(`${API_BASE}/api/analytics/python-query`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      doc_id: docId,
+      question,
+      plan
+    })
+  });
+  if (!res.ok) {
+    let err = 'Failed to generate reproducible Python query';
+    try {
+      const data = await res.json();
+      if (data.detail) err = data.detail;
+    } catch (_) {}
+    throw new Error(err);
+  }
+  return res.json();
 }
 
 export async function streamChatQuery(

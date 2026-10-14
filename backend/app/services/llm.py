@@ -16,6 +16,7 @@ from fastapi import Request
 from backend.app import config
 from backend.app.database import database
 from backend.app.services import retrieval, dataset_engine, query_router
+from backend.app.services.python_query_generator import generate_python_query
 
 logger = logging.getLogger("eda.llm")
 _groq_client = None
@@ -206,7 +207,14 @@ async def generate_answer_stream(
 
         # ── BRANCH A: STRUCTURED DATASET OPERATION (DUCKDB / PARQUET) ────────
         if query_type == "STRUCTURED_DATA_OPERATION" and schema_info:
-            plan = query_router.plan_structured_operation(question, schema_info)
+            prev_plan = None
+            recent_turns = database.get_recent_chat_history(doc_id, limit=1)
+            if recent_turns and len(recent_turns) > 0:
+                prev_q = recent_turns[0].get("question", "")
+                if prev_q:
+                    prev_plan = query_router.plan_structured_operation(prev_q, schema_info)
+
+            plan = query_router.plan_structured_operation(question, schema_info, prev_plan=prev_plan)
             df_result = dataset_engine.execute_dataframe_operation(doc_id, plan)
 
             # Handle Schema / Missing Column Errors Gracefully
@@ -222,6 +230,15 @@ async def generate_answer_stream(
             sql_query = df_result.get("sql_query", plan.get("sql", "SELECT * FROM active_dataset LIMIT 10;"))
             exec_latency_ms = df_result.get("execution_latency_ms", (time.time() - start_time) * 1000.0)
 
+            # Retrieve Document Metadata for clean user-facing dataset name & version
+            doc = database.get_document(doc_id)
+            dataset_name = (doc.get("filename") if doc else None) or f"{doc_id}.parquet"
+            dataset_version = (doc.get("updated_at") or doc.get("created_at") or "v1.0") if doc else "v1.0"
+            query_id = f"q_{int(time.time() * 1000)}"
+
+            # Generate deterministic reproducible Python query from the EXACT same analytical plan
+            python_res = generate_python_query(plan, dataset_name=dataset_name, sheet_name=plan.get("sheet_name"))
+
             # Build Citation for Structured Dataset
             sheet_label = plan.get("sheet_name") or "Dataset"
             total_rows = df_result.get("total_dataset_rows", 0)
@@ -236,11 +253,19 @@ async def generate_answer_stream(
                 "is_table": True
             }]
 
-            # 1. EMIT table_ready EVENT IMMEDIATELY (Sub-Second Target)
+            # 1. EMIT table_ready EVENT IMMEDIATELY (Sub-Second Target) with Reproducible Python Code
             table_ready_payload = {
                 "type": "table_ready",
                 "table_markdown": md_table,
                 "sql_query": sql_query,
+                "python_query": python_res.get("python_code", ""),
+                "analytical_plan": plan,
+                "dataset_name": dataset_name,
+                "dataset_id": doc_id,
+                "dataset_version": dataset_version,
+                "query_id": query_id,
+                "operations": python_res.get("operations", []),
+                "library": python_res.get("library", "pandas"),
                 "latency_ms": round(exec_latency_ms, 2),
                 "row_count": res_rows_count,
                 "column_count": cols_count

@@ -15,7 +15,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 from backend.app import config
-from backend.app.routes import health, upload, documents, chat
+from backend.app.routes import health, upload, documents, chat, analytics
 from backend.app.services import embeddings, retrieval
 
 

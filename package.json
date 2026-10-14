@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "concurrently -k \"npm:dev:backend\" \"npm:dev:frontend\"",
+    "dev": "python run.py",
     "dev:backend": "python app.py",
     "dev:frontend": "npm run dev --prefix frontend",
     "build": "npm run build --prefix frontend",
@@ -19,4 +19,3 @@
     "react-dom": "^18.2.0"
   }
 }
-

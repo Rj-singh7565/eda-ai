@@ -72,15 +72,31 @@ def classify_query(
     return "STRUCTURED_DATA_OPERATION", schema_info
 
 
-def parse_structured_plan_rule_based(question: str, schema_info: Dict[str, Any]) -> Dict[str, Any]:
+def parse_structured_plan_rule_based(
+    question: str,
+    schema_info: Dict[str, Any],
+    prev_plan: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
     """
     Deterministic rule-based query parser that translates natural language
     into a validated DataFrame operation plan.
+    Supports canonical operation sequences and multi-step follow-up queries.
     """
     q_lower = question.lower()
     columns: List[str] = schema_info.get("columns", [])
     numeric_cols: List[str] = schema_info.get("numeric_columns", [])
     categorical_cols: List[str] = schema_info.get("categorical_columns", [])
+
+    # If chaining from a previous analytical plan (e.g., follow-up filter on groupby result)
+    is_follow_up = False
+    inherited_group_by = []
+    inherited_aggs = []
+    if prev_plan and prev_plan.get("operation") in ("groupby", "group_by", "aggregate"):
+        # Check if question is a follow-up constraint like "only show regions where average sales > 50000"
+        if any(w in q_lower for w in ["only show", "filter", "where", "having", "with", "exceeding", "above", "below"]):
+            is_follow_up = True
+            inherited_group_by = list(prev_plan.get("group_by") or [])
+            inherited_aggs = list(prev_plan.get("aggregations") or [])
 
     plan: Dict[str, Any] = {
         "operation": "select",
@@ -88,10 +104,15 @@ def parse_structured_plan_rule_based(question: str, schema_info: Dict[str, Any])
         "preserve_all_columns": True,
         "conditions": [],
         "sort_by": [],
-        "group_by": [],
-        "aggregations": [],
-        "limit": None
+        "group_by": inherited_group_by,
+        "aggregations": inherited_aggs,
+        "post_conditions": [],
+        "limit": None,
+        "operations": []
     }
+
+    if is_follow_up:
+        plan["operation"] = prev_plan.get("operation", "groupby")
 
     # 1. Detect Explicit Column Selection (e.g., "Show only Student and CGPA for ...")
     show_only_match = re.search(
@@ -164,10 +185,9 @@ def parse_structured_plan_rule_based(question: str, schema_info: Dict[str, Any])
             calc_col = numeric_cols[0] if numeric_cols else columns[0]
 
         plan["aggregations"] = [{"column": calc_col, "function": detected_agg or "mean"}]
-        return plan
 
     # If aggregation detected without group by (e.g. "What is the average salary?")
-    if detected_agg and not re.search(r"\b(show|list|filter|give me all)\b", q_lower):
+    elif detected_agg and not re.search(r"\b(show|list|filter|give me all)\b", q_lower):
         # Find column to aggregate
         target_agg_col = None
         for col in numeric_cols:
@@ -179,7 +199,6 @@ def parse_structured_plan_rule_based(question: str, schema_info: Dict[str, Any])
 
         plan["operation"] = "aggregate"
         plan["aggregations"] = [{"column": target_agg_col, "function": detected_agg}]
-        return plan
 
     # 4. Detect Top N / Bottom N / Sorting
     top_n_match = re.search(r"\b(?:top|first|highest)\s+(\d+)\b", q_lower)
@@ -215,8 +234,15 @@ def parse_structured_plan_rule_based(question: str, schema_info: Dict[str, Any])
         if m_gt:
             val = float(m_gt.group(1))
             op = ">=" if (">=" in m_gt.group(0) or "at least" in m_gt.group(0)) else ">"
-            plan["operation"] = "filter"
-            plan["conditions"].append({"column": col, "operator": op, "value": val})
+            if is_follow_up and any(a.get("column", "").lower() == col.lower() for a in inherited_aggs):
+                agg_entry = next(a for a in inherited_aggs if a.get("column", "").lower() == col.lower())
+                f = agg_entry.get("function", "mean").lower()
+                sfx = "AVG" if f in ("mean", "avg", "average") else f.upper()
+                plan["post_conditions"].append({"column": f"{agg_entry['column']}_{sfx}", "operator": op, "value": val})
+            else:
+                if plan["operation"] == "select":
+                    plan["operation"] = "filter"
+                plan["conditions"].append({"column": col, "operator": op, "value": val})
             matched_filter_cols.add(col)
             continue
 
@@ -225,8 +251,15 @@ def parse_structured_plan_rule_based(question: str, schema_info: Dict[str, Any])
         if m_lt:
             val = float(m_lt.group(1))
             op = "<=" if ("<=" in m_lt.group(0) or "at most" in m_lt.group(0)) else "<"
-            plan["operation"] = "filter"
-            plan["conditions"].append({"column": col, "operator": op, "value": val})
+            if is_follow_up and any(a.get("column", "").lower() == col.lower() for a in inherited_aggs):
+                agg_entry = next(a for a in inherited_aggs if a.get("column", "").lower() == col.lower())
+                f = agg_entry.get("function", "mean").lower()
+                sfx = "AVG" if f in ("mean", "avg", "average") else f.upper()
+                plan["post_conditions"].append({"column": f"{agg_entry['column']}_{sfx}", "operator": op, "value": val})
+            else:
+                if plan["operation"] == "select":
+                    plan["operation"] = "filter"
+                plan["conditions"].append({"column": col, "operator": op, "value": val})
             matched_filter_cols.add(col)
             continue
 
@@ -234,13 +267,20 @@ def parse_structured_plan_rule_based(question: str, schema_info: Dict[str, Any])
         m_eq = re.search(eq_pat, q_lower)
         if m_eq:
             val = float(m_eq.group(1))
-            plan["operation"] = "filter"
-            plan["conditions"].append({"column": col, "operator": "==", "value": val})
+            if is_follow_up and any(a.get("column", "").lower() == col.lower() for a in inherited_aggs):
+                agg_entry = next(a for a in inherited_aggs if a.get("column", "").lower() == col.lower())
+                f = agg_entry.get("function", "mean").lower()
+                sfx = "AVG" if f in ("mean", "avg", "average") else f.upper()
+                plan["post_conditions"].append({"column": f"{agg_entry['column']}_{sfx}", "operator": "==", "value": val})
+            else:
+                if plan["operation"] == "select":
+                    plan["operation"] = "filter"
+                plan["conditions"].append({"column": col, "operator": "==", "value": val})
             matched_filter_cols.add(col)
             continue
 
     # Fallback pattern for columns referenced by relative phrasing
-    if not plan["conditions"]:
+    if not plan["conditions"] and not is_follow_up:
         comp_patterns = [
             r"([a-zA-Z0-9_\s]+?)\s*([><]=?|==?|!=)\s*(\d+(?:\.\d+)?)",
             r"([a-zA-Z0-9_\s]+?)\s+(?:above|greater than|more than|exceeding|over|higher than|>=|>)\s*(\d+(?:\.\d+)?)",
@@ -277,7 +317,8 @@ def parse_structured_plan_rule_based(question: str, schema_info: Dict[str, Any])
                     elif "<=" in matched_text or "at most" in matched_text:
                         op = "<="
 
-                    plan["operation"] = "filter"
+                    if plan["operation"] == "select":
+                        plan["operation"] = "filter"
                     plan["conditions"].append({
                         "column": matched_col,
                         "operator": op,
@@ -307,12 +348,125 @@ def parse_structured_plan_rule_based(question: str, schema_info: Dict[str, Any])
     if any(w in q_lower for w in ["missing value", "null value", "missing data", "null count", "nan count"]):
         plan["operation"] = "null_analysis"
 
+    # 8. Multi-Step Query / Follow-up Post-Aggregation Conditions
+    # e.g., "Only show regions where average sales > 50000" or "regions where sales_AVG > 50000"
+    if plan.get("operation") in ("groupby", "group_by") and plan.get("aggregations"):
+        agg_col = plan["aggregations"][0].get("column", "")
+        agg_func = (plan["aggregations"][0].get("function") or "mean").lower()
+        func_suffix = agg_func.upper() if agg_func != "mean" else "AVG"
+        alias = f"{agg_col}_{func_suffix}"
+
+        # Look for comparison condition referencing aggregated metric
+        comp_match = re.search(r"(?:where|having|with|whose)?\s*(?:average|avg|mean|total|sum|max|min)?\s*(?:" + re.escape(agg_col.lower()) + r"|" + re.escape(alias.lower()) + r")\s*([><]=?|==?|!=)\s*(\d+(?:\.\d+)?)", q_lower)
+        if not comp_match:
+            # Also check phrasing like "average sales > 50000" or "sales > 50000"
+            comp_match = re.search(r"(\w+[\s\w]*?)\s*([><]=?|==?|!=)\s*(\d+(?:\.\d+)?)", q_lower)
+
+        if comp_match:
+            raw_target = comp_match.group(1) if len(comp_match.groups()) >= 3 else ""
+            op_sym = comp_match.group(len(comp_match.groups()) - 1)
+            num_v = float(comp_match.group(len(comp_match.groups())))
+            # Only add to post_conditions if it targets the aggregated result column
+            if is_follow_up or agg_col.lower() in q_lower or "average" in q_lower or "avg" in q_lower or "total" in q_lower or "sum" in q_lower:
+                plan["post_conditions"].append({
+                    "column": alias,
+                    "raw_column": agg_col,
+                    "operator": op_sym,
+                    "value": num_v
+                })
+
+    # Build canonical operations sequence
+    plan["operations"] = build_canonical_operations(plan)
+
     return plan
 
 
-def plan_structured_operation(question: str, schema_info: Dict[str, Any]) -> Dict[str, Any]:
+def build_canonical_operations(plan: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Build a canonical, deterministic operation sequence representing the complete analytical flow:
+    Filter -> Group By -> Aggregate -> Post Filter -> Sort -> Limit
+    """
+    ops: List[Dict[str, Any]] = []
+
+    # 1. Pre-Aggregation Filter Conditions
+    for cond in plan.get("conditions") or []:
+        ops.append({
+            "type": "filter",
+            "column": cond.get("column"),
+            "operator": cond.get("operator", "=="),
+            "value": cond.get("value")
+        })
+
+    # 2. Group By / Aggregations
+    op_type = (plan.get("operation") or "select").lower()
+    if op_type in ("groupby", "group_by") or plan.get("group_by"):
+        agg_map = {}
+        for a in plan.get("aggregations") or []:
+            c = a.get("column") or "all"
+            f = a.get("function") or "count"
+            agg_map[c] = f
+        ops.append({
+            "type": "groupby",
+            "columns": plan.get("group_by", []),
+            "aggregations": agg_map
+        })
+    elif op_type in ("aggregate", "agg", "calc", "math"):
+        agg_map = {}
+        for a in plan.get("aggregations") or []:
+            c = a.get("column") or "all"
+            f = a.get("function") or "count"
+            agg_map[c] = f
+        ops.append({
+            "type": "aggregate",
+            "aggregations": agg_map
+        })
+    elif op_type == "null_analysis":
+        ops.append({
+            "type": "null_analysis"
+        })
+    elif plan.get("target_columns") and not plan.get("preserve_all_columns", True):
+        ops.append({
+            "type": "select",
+            "columns": plan.get("target_columns", [])
+        })
+
+    # 3. Post-Aggregation Filter (Multi-Step Having / Chained Queries)
+    for pcond in plan.get("post_conditions") or []:
+        ops.append({
+            "type": "filter",
+            "column": pcond.get("column"),
+            "operator": pcond.get("operator", "=="),
+            "value": pcond.get("value"),
+            "is_post_filter": True
+        })
+
+    # 4. Sorting
+    for s in plan.get("sort_by") or []:
+        ops.append({
+            "type": "sort",
+            "column": s.get("column"),
+            "direction": "asc" if s.get("ascending", True) else "desc"
+        })
+
+    # 5. Limit
+    if plan.get("limit"):
+        ops.append({
+            "type": "limit",
+            "value": int(plan["limit"])
+        })
+
+    return ops
+
+
+def plan_structured_operation(
+    question: str,
+    schema_info: Dict[str, Any],
+    prev_plan: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
     """
     Main planner for structured dataset operations.
-    Translates question to a validated Plan dictionary.
+    Translates question to a validated canonical Plan dictionary.
+    Supports multi-step chained queries using prev_plan.
     """
-    return parse_structured_plan_rule_based(question, schema_info)
+    return parse_structured_plan_rule_based(question, schema_info, prev_plan=prev_plan)
+

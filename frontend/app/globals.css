@@ -2624,6 +2624,30 @@ html, body {
   color: #ef4444;
 }
 
+.turn-python-query-tab {
+  color: #4f46e5;
+  background-color: #f5f3ff;
+  border-color: #ddd6fe;
+  transition: all 0.15s ease;
+}
+
+.turn-python-query-tab:hover:not(:disabled) {
+  background-color: #ede9fe !important;
+  border-color: #c4b5fd !important;
+  color: #4338ca !important;
+  box-shadow: 0 1px 3px rgba(79, 70, 229, 0.15);
+}
+
+.turn-toolbar-tab-disabled,
+.turn-toolbar-tab:disabled {
+  opacity: 0.45 !important;
+  cursor: not-allowed !important;
+  pointer-events: none;
+  background-color: #f8fafc !important;
+  border-color: #e2e8f0 !important;
+  color: #94a3b8 !important;
+}
+
 .turn-toolbar-icon-btn {
   background: #f8fafc;
   border: 1px solid #e2e8f0;
@@ -2994,6 +3018,328 @@ html, body {
 .floating-pdf-fab:hover {
   transform: translateY(-2px);
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.16);
+}
+
+/* ── Reproducible Python Query Modal ──────────────────────────────── */
+.python-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(4px);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  animation: pythonModalFadeIn 0.18s ease-out;
+}
+
+@keyframes pythonModalFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes pythonModalScaleUp {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.python-modal-dialog {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  box-shadow: 0 25px 50px -12px rgba(15, 23, 42, 0.28);
+  width: 100%;
+  max-width: 680px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: pythonModalScaleUp 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.python-modal-header {
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #f1f5f9;
+  background: #ffffff;
+}
+
+.python-modal-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.python-modal-icon-badge {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: #eef2ff;
+  color: #4f46e5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.python-modal-title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0;
+  font-family: var(--font-heading);
+  line-height: 1.25;
+}
+
+.python-modal-subtitle {
+  font-size: 0.76rem;
+  color: #64748b;
+  margin: 3px 0 0 0;
+}
+
+.python-modal-close-btn {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.python-modal-close-btn:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.python-modal-meta-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  padding: 9px 20px;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+  font-size: 0.78rem;
+}
+
+.python-meta-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.python-meta-label {
+  font-weight: 600;
+  color: #64748b;
+}
+
+.python-meta-val {
+  color: #0f172a;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.python-meta-val-badge {
+  background: #e0e7ff;
+  color: #3730a3;
+  padding: 2px 7px;
+  border-radius: 5px;
+  font-weight: 600;
+  font-size: 0.72rem;
+  font-family: var(--font-mono);
+}
+
+.python-meta-item-ops {
+  flex: 1;
+  min-width: 160px;
+}
+
+.python-meta-val-ops {
+  color: #0369a1;
+  font-weight: 600;
+  background: #e0f2fe;
+  padding: 2px 8px;
+  border-radius: 5px;
+  font-size: 0.72rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  max-width: 280px;
+}
+
+.python-modal-code-wrap {
+  flex: 1;
+  min-height: 220px;
+  max-height: 480px;
+  overflow-y: auto;
+  padding: 16px 20px;
+  background: #0f172a;
+}
+
+.python-modal-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 48px 20px;
+  color: #94a3b8;
+  font-size: 0.85rem;
+}
+
+.python-spin {
+  animation: pythonSpin 1s linear infinite;
+  color: #818cf8;
+}
+
+@keyframes pythonSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.python-code-container {
+  display: flex;
+  flex-direction: column;
+}
+
+.python-code-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.python-code-lang {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #94a3b8;
+  font-size: 0.72rem;
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+}
+
+.python-inline-copy-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #cbd5e1;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.python-inline-copy-btn:hover {
+  background: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
+}
+
+.python-code-box {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  line-height: 1.65;
+  color: #f1f5f9;
+  background: transparent;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.python-code-box code {
+  font-family: inherit;
+  color: inherit;
+}
+
+.python-modal-footer {
+  padding: 14px 20px;
+  border-top: 1px solid #e2e8f0;
+  background: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.python-modal-footer-note {
+  font-size: 0.72rem;
+  color: #94a3b8;
+  font-style: italic;
+}
+
+.python-modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.python-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 7px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.python-btn-secondary {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  color: #64748b;
+}
+
+.python-btn-secondary:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.python-btn-copy {
+  background: #eef2ff;
+  border: 1px solid #c7d2fe;
+  color: #4338ca;
+}
+
+.python-btn-copy:hover {
+  background: #e0e7ff;
+  color: #3730a3;
+}
+
+.python-btn-primary {
+  background: #4f46e5;
+  border: 1px solid #4338ca;
+  color: #ffffff;
+}
+
+.python-btn-primary:hover {
+  background: #4338ca;
+  box-shadow: 0 2px 8px rgba(79, 70, 229, 0.25);
 }
 
 /* Reduced Motion Accessibility */

@@ -311,6 +311,14 @@ export default function DashboardClientContainer({
                     text: tableData.table_markdown,
                     tableMarkdown: tableData.table_markdown,
                     sqlQuery: tableData.sql_query,
+                    pythonQuery: tableData.python_query,
+                    analyticalPlan: tableData.analytical_plan,
+                    datasetName: tableData.dataset_name || activeDoc?.filename,
+                    datasetId: tableData.dataset_id || activeDocId,
+                    datasetVersion: tableData.dataset_version,
+                    queryId: tableData.query_id,
+                    operations: tableData.operations,
+                    library: tableData.library || 'pandas',
                     latencyMs: tableData.latency_ms || elapsed
                   }
                 : msg

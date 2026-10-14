@@ -37,7 +37,24 @@ export default function AnalysisWorkspace({
   isStreaming = false
 }: AnalysisWorkspaceProps) {
   // Group messages into paired turns
-  const turns: { id: string; question: string; answer: string; timestamp?: string; streaming?: boolean; latencyMs?: number }[] = [];
+  const turns: {
+    id: string;
+    question: string;
+    answer: string;
+    timestamp?: string;
+    streaming?: boolean;
+    latencyMs?: number;
+    tableMarkdown?: string;
+    sqlQuery?: string;
+    pythonQuery?: string;
+    analyticalPlan?: any;
+    datasetName?: string;
+    datasetId?: string;
+    datasetVersion?: string;
+    queryId?: string;
+    operations?: string[];
+    library?: string;
+  }[] = [];
   
   for (let i = 0; i < messages.length; i++) {
     if (messages[i].sender === 'user') {
@@ -46,13 +63,52 @@ export default function AnalysisWorkspace({
       let a = '';
       let isStream = false;
       let latency = 0;
+      let tableMarkdown = undefined;
+      let sqlQuery = undefined;
+      let pythonQuery = undefined;
+      let analyticalPlan = undefined;
+      let datasetName = undefined;
+      let datasetId = undefined;
+      let datasetVersion = undefined;
+      let queryId = undefined;
+      let operations = undefined;
+      let library = undefined;
+
       if (i + 1 < messages.length && messages[i + 1].sender === 'assistant') {
-        a = messages[i + 1].text;
-        isStream = !!messages[i + 1].streaming;
-        latency = messages[i + 1].latencyMs || 0;
+        const asst = messages[i + 1];
+        a = asst.text;
+        isStream = !!asst.streaming;
+        latency = asst.latencyMs || 0;
+        tableMarkdown = asst.tableMarkdown;
+        sqlQuery = asst.sqlQuery;
+        pythonQuery = asst.pythonQuery;
+        analyticalPlan = asst.analyticalPlan;
+        datasetName = asst.datasetName;
+        datasetId = asst.datasetId;
+        datasetVersion = asst.datasetVersion;
+        queryId = asst.queryId;
+        operations = asst.operations;
+        library = asst.library;
         i++;
       }
-      turns.push({ id: `turn-${i}`, question: q, answer: a, timestamp: t, streaming: isStream, latencyMs: latency });
+      turns.push({
+        id: `turn-${i}`,
+        question: q,
+        answer: a,
+        timestamp: t,
+        streaming: isStream,
+        latencyMs: latency,
+        tableMarkdown,
+        sqlQuery,
+        pythonQuery,
+        analyticalPlan,
+        datasetName: datasetName || activeDoc?.filename,
+        datasetId: datasetId || activeDoc?.doc_id,
+        datasetVersion,
+        queryId,
+        operations,
+        library
+      });
     }
   }
 
@@ -110,6 +166,16 @@ export default function AnalysisWorkspace({
                 latencyMs={turn.latencyMs || (turn.streaming ? 0 : 18)}
                 dbType={dbName}
                 streaming={turn.streaming}
+                tableMarkdown={turn.tableMarkdown}
+                sqlQuery={turn.sqlQuery}
+                pythonQuery={turn.pythonQuery}
+                analyticalPlan={turn.analyticalPlan}
+                datasetName={turn.datasetName || docName}
+                datasetId={turn.datasetId || activeDoc?.doc_id}
+                datasetVersion={turn.datasetVersion}
+                queryId={turn.queryId}
+                operations={turn.operations}
+                library={turn.library}
                 onClearChat={onClearChat}
               />
             ))}

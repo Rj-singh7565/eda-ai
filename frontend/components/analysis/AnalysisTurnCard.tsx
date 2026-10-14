@@ -11,8 +11,13 @@ import {
   ArrowUpDown,
   Check,
   Copy,
-  Trash2
+  Trash2,
+  FileCode,
+  Terminal,
+  X,
+  Loader2
 } from 'lucide-react';
+import { fetchPythonQuery } from '../../lib/api';
 
 interface AnalysisTurnCardProps {
   question: string;
@@ -21,6 +26,16 @@ interface AnalysisTurnCardProps {
   latencyMs?: number;
   dbType?: string;
   streaming?: boolean;
+  tableMarkdown?: string;
+  sqlQuery?: string;
+  pythonQuery?: string;
+  analyticalPlan?: any;
+  datasetName?: string;
+  datasetId?: string;
+  datasetVersion?: string;
+  queryId?: string;
+  operations?: string[];
+  library?: string;
   onClearChat?: () => void;
 }
 
@@ -31,6 +46,16 @@ export default function AnalysisTurnCard({
   latencyMs = 12,
   dbType = 'SQLITE',
   streaming = false,
+  tableMarkdown,
+  sqlQuery,
+  pythonQuery,
+  analyticalPlan,
+  datasetName,
+  datasetId,
+  datasetVersion,
+  queryId,
+  operations,
+  library = 'pandas',
   onClearChat
 }: AnalysisTurnCardProps) {
   const [viewMode, setViewMode] = useState<'table' | 'chart' | 'sql'>('table');
@@ -38,6 +63,104 @@ export default function AnalysisTurnCard({
   const [sortAsc, setSortAsc] = useState(true);
   const [copied, setCopied] = useState(false);
   const [liveStopwatch, setLiveStopwatch] = useState(0);
+
+  // Reproducible Python Query modal & state
+  const [isPythonModalOpen, setIsPythonModalOpen] = useState(false);
+  const [pythonCode, setPythonCode] = useState<string>(pythonQuery || '');
+  const [isPythonLoading, setIsPythonLoading] = useState(false);
+  const [pythonCopied, setPythonCopied] = useState(false);
+
+  useEffect(() => {
+    if (pythonQuery) {
+      setPythonCode(pythonQuery);
+    }
+  }, [pythonQuery]);
+
+  const hasAnalyticalResult = Boolean(
+    pythonCode || 
+    pythonQuery || 
+    analyticalPlan || 
+    (datasetId && (tableMarkdown || sqlQuery))
+  );
+
+  const operationSummary = useMemo(() => {
+    if (operations && operations.length > 0) {
+      return operations.join(' → ');
+    }
+    if (analyticalPlan?.operations && Array.isArray(analyticalPlan.operations)) {
+      return analyticalPlan.operations
+        .map((op: any) => (typeof op === 'string' ? op : (op.type || 'operation')))
+        .join(' → ');
+    }
+    if (sqlQuery) {
+      const ops: string[] = [];
+      const upper = sqlQuery.toUpperCase();
+      if (upper.includes('WHERE')) ops.push('Filter');
+      if (upper.includes('GROUP BY')) ops.push('Group By & Aggregate');
+      if (upper.includes('ORDER BY')) ops.push('Sort');
+      if (upper.includes('LIMIT')) ops.push('Limit');
+      if (ops.length > 0) return ops.join(' → ');
+    }
+    return 'Dataset Query & Transformation';
+  }, [operations, analyticalPlan, sqlQuery]);
+
+  const displayedCode = useMemo(() => {
+    if (pythonCode) return pythonCode;
+    const cleanFileName = (datasetName || 'dataset.parquet').replace(/\\/g, '/').split('/').pop() || 'dataset.parquet';
+    const isCsv = cleanFileName.toLowerCase().endsWith('.csv');
+    const readFunc = isCsv ? 'read_csv' : 'read_parquet';
+    return `# Reproducible Analytical Pipeline\nimport pandas as pd\n\ndf = pd.${readFunc}("${cleanFileName}")\n\n# Analytical result\nresult = df\nprint(result.head(10))\n`;
+  }, [pythonCode, datasetName]);
+
+  const handleOpenPythonModal = async () => {
+    if (!hasAnalyticalResult) return;
+    setIsPythonModalOpen(true);
+    if (!pythonCode && datasetId) {
+      setIsPythonLoading(true);
+      try {
+        const res = await fetchPythonQuery(datasetId, question, datasetVersion);
+        if (res && (res.python_code || res.python_query)) {
+          setPythonCode(res.python_code || res.python_query || '');
+        }
+      } catch (err) {
+        console.error('Failed to load python query:', err);
+      } finally {
+        setIsPythonLoading(false);
+      }
+    }
+  };
+
+  const handleCopyPython = () => {
+    if (!displayedCode) return;
+    navigator.clipboard.writeText(displayedCode);
+    setPythonCopied(true);
+    setTimeout(() => setPythonCopied(false), 2000);
+  };
+
+  const handleDownloadPython = () => {
+    if (!displayedCode) return;
+    const blob = new Blob([displayedCode], { type: 'text/x-python;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const baseName = (datasetName || 'dataset').replace(/\.[^/.]+$/, '').replace(/[^a-zA-Z0-9_-]/g, '_');
+    a.download = `reproduce_${baseName || 'query'}.py`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  useEffect(() => {
+    if (!isPythonModalOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsPythonModalOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isPythonModalOpen]);
 
   const tableContainerRef = useRef<HTMLDivElement>(null);
 
@@ -387,6 +510,16 @@ export default function AnalysisTurnCard({
           )}
 
           <button
+            className={`turn-toolbar-tab turn-python-query-tab ${hasAnalyticalResult ? '' : 'turn-toolbar-tab-disabled'}`}
+            onClick={handleOpenPythonModal}
+            disabled={!hasAnalyticalResult}
+            title={hasAnalyticalResult ? "View Reproducible Python/pandas code for this result" : "No analytical query result available"}
+          >
+            <FileCode size={13} />
+            <span>Python Query</span>
+          </button>
+
+          <button
             className={`turn-toolbar-tab ${viewMode === 'sql' ? 'active' : ''}`}
             onClick={() => setViewMode('sql')}
             title="View SQL Query"
@@ -692,6 +825,123 @@ export default function AnalysisTurnCard({
           </div>
           <div className="turn-insight-text">
             <strong>Insight:</strong> {parsedData.insight}
+          </div>
+        </div>
+      )}
+
+      {/* ── Reproducible Python Query Modal ──────────────────────────── */}
+      {isPythonModalOpen && (
+        <div
+          className="python-modal-backdrop"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsPythonModalOpen(false);
+          }}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="python-modal-title"
+        >
+          <div className="python-modal-dialog">
+            {/* Header */}
+            <div className="python-modal-header">
+              <div className="python-modal-title-wrap">
+                <div className="python-modal-icon-badge">
+                  <FileCode size={18} />
+                </div>
+                <div>
+                  <h3 id="python-modal-title" className="python-modal-title">Python Query</h3>
+                  <p className="python-modal-subtitle">Exact reproducible pandas code for this analytical result</p>
+                </div>
+              </div>
+              <button
+                className="python-modal-close-btn"
+                onClick={() => setIsPythonModalOpen(false)}
+                title="Close modal"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Metadata Bar */}
+            <div className="python-modal-meta-bar">
+              <div className="python-meta-item">
+                <span className="python-meta-label">Dataset:</span>
+                <span className="python-meta-val" title={datasetName || 'Active Dataset'}>
+                  {(datasetName ? datasetName.replace(/\\/g, '/').split('/').pop() : '') || 'dataset.parquet'}
+                </span>
+              </div>
+              <div className="python-meta-item">
+                <span className="python-meta-label">Library:</span>
+                <span className="python-meta-val-badge">{library || 'pandas'}</span>
+              </div>
+              <div className="python-meta-item python-meta-item-ops">
+                <span className="python-meta-label">Pipeline:</span>
+                <span className="python-meta-val-ops" title={operationSummary}>
+                  {operationSummary}
+                </span>
+              </div>
+            </div>
+
+            {/* Code Content */}
+            <div className="python-modal-code-wrap">
+              {isPythonLoading ? (
+                <div className="python-modal-loading">
+                  <Loader2 size={24} className="python-spin" />
+                  <span>Generating reproducible code...</span>
+                </div>
+              ) : (
+                <div className="python-code-container">
+                  <div className="python-code-header">
+                    <span className="python-code-lang">
+                      <Terminal size={12} /> python (pandas)
+                    </span>
+                    <button
+                      className="python-inline-copy-btn"
+                      onClick={handleCopyPython}
+                    >
+                      {pythonCopied ? <Check size={12} /> : <Copy size={12} />}
+                      <span>{pythonCopied ? 'Copied' : 'Copy'}</span>
+                    </button>
+                  </div>
+                  <pre className="python-code-box">
+                    <code>{displayedCode}</code>
+                  </pre>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="python-modal-footer">
+              <div className="python-modal-footer-note">
+                Single source of truth: canonical analytical plan &amp; dataset state
+              </div>
+              <div className="python-modal-actions">
+                <button
+                  type="button"
+                  className="python-btn python-btn-secondary"
+                  onClick={() => setIsPythonModalOpen(false)}
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  className="python-btn python-btn-copy"
+                  onClick={handleCopyPython}
+                  disabled={isPythonLoading}
+                >
+                  {pythonCopied ? <Check size={14} /> : <Copy size={14} />}
+                  <span>{pythonCopied ? 'Copied' : 'Copy Code'}</span>
+                </button>
+                <button
+                  type="button"
+                  className="python-btn python-btn-primary"
+                  onClick={handleDownloadPython}
+                  disabled={isPythonLoading}
+                >
+                  <Download size={14} />
+                  <span>Download .py</span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

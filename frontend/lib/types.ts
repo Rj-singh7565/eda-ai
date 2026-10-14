@@ -48,6 +48,28 @@ export interface ChatMessage {
   latencyMs?: number;
   tableMarkdown?: string;
   sqlQuery?: string;
+  pythonQuery?: string;
+  analyticalPlan?: any;
+  datasetName?: string;
+  datasetId?: string;
+  datasetVersion?: string;
+  queryId?: string;
+  operations?: string[];
+  library?: string;
+}
+
+export interface PythonQueryData {
+  python_code: string;
+  python_query?: string;
+  language: string;
+  library: string;
+  dataset_name: string;
+  dataset_version?: string;
+  operations: string[];
+  is_available: boolean;
+  analytical_plan?: any;
+  query_id?: string;
+  message?: string;
 }
 
 export interface SkippedFile {

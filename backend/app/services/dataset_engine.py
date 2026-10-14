@@ -583,7 +583,35 @@ def execute_duckdb_operation(
                     out_cols.append(alias)
 
             select_cols = ", ".join(group_exprs + agg_exprs)
-            sql = f"SELECT {select_cols} FROM {source_expr}{where_sql} GROUP BY {', '.join(group_exprs)}"
+            base_groupby_sql = f"SELECT {select_cols} FROM {source_expr}{where_sql} GROUP BY {', '.join(group_exprs)}"
+
+            # Handle post-aggregation filtering (Multi-Step / HAVING)
+            post_clauses = []
+            for pcond in plan.get("post_conditions") or []:
+                pcol = pcond.get("column")
+                pop = pcond.get("operator", "==").lower()
+                pval = pcond.get("value")
+                if not pcol or pval is None:
+                    continue
+                matched_p = resolve_column_name(pcol, out_cols) or pcol
+                pcol_esc = f'"{matched_p.replace(chr(34), "")}"'
+                if pop in (">", "gt"):
+                    post_clauses.append(f"TRY_CAST({pcol_esc} AS DOUBLE) > {float(pval)}")
+                elif pop in (">=", "gte"):
+                    post_clauses.append(f"TRY_CAST({pcol_esc} AS DOUBLE) >= {float(pval)}")
+                elif pop in ("<", "lt"):
+                    post_clauses.append(f"TRY_CAST({pcol_esc} AS DOUBLE) < {float(pval)}")
+                elif pop in ("<=", "lte"):
+                    post_clauses.append(f"TRY_CAST({pcol_esc} AS DOUBLE) <= {float(pval)}")
+                elif pop in ("==", "=", "eq"):
+                    post_clauses.append(f"TRY_CAST({pcol_esc} AS DOUBLE) = {float(pval)}")
+                elif pop in ("!=", "<>", "neq"):
+                    post_clauses.append(f"TRY_CAST({pcol_esc} AS DOUBLE) != {float(pval)}")
+
+            if post_clauses:
+                sql = f"WITH grouped_result AS ({base_groupby_sql}) SELECT * FROM grouped_result WHERE {' AND '.join(post_clauses)}"
+            else:
+                sql = base_groupby_sql
 
             if plan.get("sort_by"):
                 s_item = plan["sort_by"][0]
@@ -960,8 +988,30 @@ def execute_dataframe_operation(doc_id: str, plan: Dict[str, Any]) -> Dict[str, 
             grouped_df = work_df.groupby(resolved_groups).agg(agg_spec)
             # Flatten multi-level column index if present
             if isinstance(grouped_df.columns, pd.MultiIndex):
-                grouped_df.columns = [f"{col}_{fn.upper()}" for col, fn in grouped_df.columns]
+                grouped_df.columns = [f"{col}_{'AVG' if fn.lower() in ('mean', 'average', 'avg') else fn.upper()}" for col, fn in grouped_df.columns]
             grouped_df = grouped_df.reset_index()
+
+            # Apply post-aggregation filter conditions if specified
+            for pcond in plan.get("post_conditions") or []:
+                pcol = pcond.get("column")
+                pop = pcond.get("operator", "==").lower()
+                pval = pcond.get("value")
+                matched_p = resolve_column_name(pcol, list(grouped_df.columns))
+                if matched_p and pval is not None:
+                    pnum = pd.to_numeric(grouped_df[matched_p], errors="coerce")
+                    val_num = float(pval)
+                    if pop in (">", "gt"):
+                        grouped_df = grouped_df[pnum > val_num]
+                    elif pop in (">=", "gte"):
+                        grouped_df = grouped_df[pnum >= val_num]
+                    elif pop in ("<", "lt"):
+                        grouped_df = grouped_df[pnum < val_num]
+                    elif pop in ("<=", "lte"):
+                        grouped_df = grouped_df[pnum <= val_num]
+                    elif pop in ("==", "=", "eq"):
+                        grouped_df = grouped_df[pnum == val_num]
+                    elif pop in ("!=", "<>", "neq"):
+                        grouped_df = grouped_df[pnum != val_num]
 
             # Sort grouped results if specified
             sort_by = plan.get("sort_by") or []

@@ -172,50 +172,55 @@ def run_ingestion_pipeline(doc_id: str, file_path: str, file_type: str = "pdf"):
 
             # Phase 5: Indexing to Pinecone (Batch upserts using reusable index)
             database.update_document_status(doc_id, "indexing")
-            index = retrieval.get_pinecone_index()
+            pinecone_indexed = False
+            try:
+                index = retrieval.get_pinecone_index()
 
-            # Batch upsert vectors into doc_id namespace
-            pinecone_vectors = []
-            seen_vector_ids = set()
-            for c, vec in zip(chunks, vectors):
-                vec_id = str(c["chunk_id"])
-                if vec_id in seen_vector_ids:
-                    continue
-                seen_vector_ids.add(vec_id)
+                # Batch upsert vectors into doc_id namespace
+                pinecone_vectors = []
+                seen_vector_ids = set()
+                for c, vec in zip(chunks, vectors):
+                    vec_id = str(c["chunk_id"])
+                    if vec_id in seen_vector_ids:
+                        continue
+                    seen_vector_ids.add(vec_id)
 
-                raw_pages = c.get("pages", [])
-                pages = [str(p) for p in raw_pages] if isinstance(raw_pages, list) else [str(raw_pages)]
+                    raw_pages = c.get("pages", [])
+                    pages = [str(p) for p in raw_pages] if isinstance(raw_pages, list) else [str(raw_pages)]
 
-                raw_page_numbers = c.get("page_numbers", [])
-                if not isinstance(raw_page_numbers, list):
-                    raw_page_numbers = [raw_page_numbers]
+                    raw_page_numbers = c.get("page_numbers", [])
+                    if not isinstance(raw_page_numbers, list):
+                        raw_page_numbers = [raw_page_numbers]
 
-                page_numbers = []
-                for p in raw_page_numbers:
-                    try:
-                        clean_str = str(p).strip().strip("[]'\"")
-                        clean_p = str(int(float(clean_str)))
-                    except Exception:
-                        clean_p = str(p)
-                    page_numbers.append(clean_p)
+                    page_numbers = []
+                    for p in raw_page_numbers:
+                        try:
+                            clean_str = str(p).strip().strip("[]'\"")
+                            clean_p = str(int(float(clean_str)))
+                        except Exception:
+                            clean_p = str(p)
+                        page_numbers.append(clean_p)
 
-                pinecone_vectors.append({
-                    "id": vec_id,
-                    "values": vec,
-                    "metadata": {
-                        "doc_id": str(doc_id),
-                        "filename": str(original_filename),
-                        "pages": pages,
-                        "page_numbers": page_numbers,
-                        "is_table": bool(c.get("is_table", False)),
-                        "text": str(c.get("text", ""))[:1500]
-                    }
-                })
+                    pinecone_vectors.append({
+                        "id": vec_id,
+                        "values": vec,
+                        "metadata": {
+                            "doc_id": str(doc_id),
+                            "filename": str(original_filename),
+                            "pages": pages,
+                            "page_numbers": page_numbers,
+                            "is_table": bool(c.get("is_table", False)),
+                            "text": str(c.get("text", ""))[:1500]
+                        }
+                    })
 
-            upsert_batch_size = getattr(config, "PINECONE_UPSERT_BATCH_SIZE", 250)
-            for i in range(0, len(pinecone_vectors), upsert_batch_size):
-                batch = pinecone_vectors[i:i + upsert_batch_size]
-                index.upsert(vectors=batch, namespace=doc_id)
+                upsert_batch_size = getattr(config, "PINECONE_UPSERT_BATCH_SIZE", 250)
+                for i in range(0, len(pinecone_vectors), upsert_batch_size):
+                    batch = pinecone_vectors[i:i + upsert_batch_size]
+                    index.upsert(vectors=batch, namespace=doc_id)
+                pinecone_indexed = True
+            except Exception as pe:
+                print(f"[INGESTION WARNING] Pinecone indexing failed for {doc_id} ({pe}). Falling back to Lexical & DuckDB SQL mode.")
 
             # Phase 6: Ready!
             database.update_document_status(
@@ -227,7 +232,7 @@ def run_ingestion_pipeline(doc_id: str, file_path: str, file_type: str = "pdf"):
                 parquet_path=parquet_path,
                 dataset_metadata=dataset_profile
             )
-            print(f"[INGESTION SUCCESS] Document {doc_id} ('{original_filename}') fully ingested ({len(chunks)} chunks, parquet={bool(parquet_path)}).")
+            print(f"[INGESTION SUCCESS] Document {doc_id} ('{original_filename}') fully ingested ({len(chunks)} chunks, parquet={bool(parquet_path)}, pinecone={pinecone_indexed}).")
 
         except Exception as e:
             error_msg = f"Ingestion error: {str(e)}"
